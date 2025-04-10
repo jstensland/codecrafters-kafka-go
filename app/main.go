@@ -26,4 +26,6 @@ func main() {
 		fmt.Println("Error accepting connection: ", err.Error())
 		os.Exit(1)
 	}
+
+	// echo -n "Placeholder request" | nc -v localhost 9092 | hexdump -C should always return message_size: 0 and correlation_id: 7. AI!
 }
