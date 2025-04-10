@@ -1,15 +1,10 @@
 package main
 
 import (
+	"encoding/binary"
 	"fmt"
 	"net"
 	"os"
-)
-
-// Ensures gofmt doesn't remove the "net" and "os" imports in stage 1 (feel free to remove this!)
-var (
-	_ = net.Listen
-	_ = os.Exit
 )
 
 func main() {
@@ -21,11 +16,30 @@ func main() {
 		fmt.Println("Failed to bind to port 9092")
 		os.Exit(1)
 	}
-	_, err = l.Accept()
-	if err != nil {
-		fmt.Println("Error accepting connection: ", err.Error())
-		os.Exit(1)
-	}
+	defer l.Close() // Ensure listener is closed when main exits
 
-	// echo -n "Placeholder request" | nc -v localhost 9092 | hexdump -C should always return message_size: 0 and correlation_id: 7. AI!
+	for {
+		conn, err := l.Accept()
+		if err != nil {
+			fmt.Println("Error accepting connection: ", err.Error())
+			continue // Continue listening for other connections
+		}
+
+		// Handle connection in a new goroutine to allow concurrent connections
+		go handleConnection(conn)
+	}
+}
+
+func handleConnection(conn net.Conn) {
+	defer conn.Close() // Ensure connection is closed when handler exits
+
+	// Response: Size (int32) = 4, Correlation ID (int32) = 7
+	response := make([]byte, 8)
+	binary.BigEndian.PutUint32(response[0:4], 4) // Size = 4 bytes
+	binary.BigEndian.PutUint32(response[4:8], 7) // Correlation ID = 7
+
+	_, err := conn.Write(response)
+	if err != nil {
+		fmt.Println("Error writing response:", err.Error())
+	}
 }
