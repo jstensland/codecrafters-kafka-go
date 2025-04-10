@@ -12,7 +12,7 @@ func main() {
 	fmt.Println("Logs from your program will appear here!")
 
 	// Listen on both IPv4 and IPv6
-	l, err := net.Listen("tcp", "[::]:9092")
+	l, err := net.Listen("tcp", ":9092")
 	if err != nil {
 		fmt.Println("Failed to bind to port 9092")
 		os.Exit(1)
