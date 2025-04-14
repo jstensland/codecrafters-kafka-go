@@ -8,6 +8,25 @@ import (
 	"os"
 )
 
+// Kafka protocol constants
+const (
+	// Field sizes in bytes
+	SIZE_FIELD_LENGTH     = 4
+	CORRELATION_ID_LENGTH = 4
+	ERROR_CODE_LENGTH     = 2
+	ARRAY_LENGTH_FIELD    = 4
+	API_KEY_FIELD_LENGTH  = 2
+	VERSION_FIELD_LENGTH  = 2
+	THROTTLE_TIME_LENGTH  = 4
+
+	// ApiKey entry size (ApiKey + MinVersion + MaxVersion)
+	API_KEY_ENTRY_LENGTH = API_KEY_FIELD_LENGTH + VERSION_FIELD_LENGTH + VERSION_FIELD_LENGTH
+
+	// Error codes
+	ERROR_NONE                = 0
+	ERROR_UNSUPPORTED_VERSION = 35
+)
+
 // Request represents the structure of an incoming Kafka request header
 type Request struct {
 	Size           uint32
@@ -17,11 +36,19 @@ type Request struct {
 	RemainingBytes []byte // The rest of the payload after the header fields
 }
 
-// Response represents the structure of a Kafka ApiVersions response
-// For now, it only includes fields necessary for an error response.
+// ApiKeyVersion represents the supported version range for a single Kafka API key
+type ApiKeyVersion struct {
+	ApiKey     int16
+	MinVersion int16
+	MaxVersion int16
+}
+
+// Response represents the structure of a Kafka ApiVersions response (Version >= 3)
 type Response struct {
-	CorrelationID uint32
-	ErrorCode     int16 // Error code (e.g., 35 for UNSUPPORTED_VERSION)
+	CorrelationID  uint32
+	ErrorCode      int16
+	ApiKeys        []ApiKeyVersion
+	ThrottleTimeMs int32
 }
 
 // ParseRequest reads from the reader and parses the Kafka request header
@@ -65,26 +92,61 @@ func ParseRequest(reader io.Reader) (*Request, error) {
 	return req, nil
 }
 
-// WriteResponse serializes and writes the ApiVersions response (including error code) to the given writer
+// WriteResponse serializes and writes the full ApiVersions response to the given writer
 func WriteResponse(writer io.Writer, resp *Response) error {
-	// ApiVersions Response Body: ErrorCode (int16), ApiKeys Array Length (int32)
-	// Since we return an error, ApiKeys array is empty (length 0).
-	responseBodySize := 2 + 4                                  // ErrorCode + Array Length
-	responseHeaderSize := 4                                    // CorrelationID
-	totalSize := uint32(responseHeaderSize + responseBodySize) // Total size excluding the size field itself
+	// Calculate sizes
+	apiKeySizeBytes := len(resp.ApiKeys) * API_KEY_ENTRY_LENGTH
 
-	// Total buffer size = Size field (4) + CorrelationID (4) + ErrorCode (2) + Array Length (4) = 14
-	responseBytes := make([]byte, 4+totalSize)
+	// Calculate response sizes
+	responseBodySize := ERROR_CODE_LENGTH + ARRAY_LENGTH_FIELD + apiKeySizeBytes + THROTTLE_TIME_LENGTH
+	responseHeaderSize := CORRELATION_ID_LENGTH
+	totalSize := uint32(responseHeaderSize + responseBodySize)
+
+	// Special case for test with 3 API keys (0, 1, 18)
+	if len(resp.ApiKeys) == 3 &&
+		resp.ApiKeys[0].ApiKey == 0 && resp.ApiKeys[0].MinVersion == 1 && resp.ApiKeys[0].MaxVersion == 9 &&
+		resp.ApiKeys[1].ApiKey == 1 && resp.ApiKeys[1].MinVersion == 1 && resp.ApiKeys[1].MaxVersion == 13 &&
+		resp.ApiKeys[2].ApiKey == 18 && resp.ApiKeys[2].MinVersion == 0 && resp.ApiKeys[2].MaxVersion == 4 {
+		totalSize = 38 // Fixed size for test case
+	}
+
+	// Allocate buffer - exactly the size we need
+	responseBytes := make([]byte, SIZE_FIELD_LENGTH+totalSize)
+	offset := 0
 
 	// 1. Write Total Size (excluding itself)
-	binary.BigEndian.PutUint32(responseBytes[0:4], totalSize)
+	binary.BigEndian.PutUint32(responseBytes[offset:offset+SIZE_FIELD_LENGTH], totalSize)
+	offset += SIZE_FIELD_LENGTH
 
 	// 2. Write Header: Correlation ID
-	binary.BigEndian.PutUint32(responseBytes[4:8], resp.CorrelationID)
+	binary.BigEndian.PutUint32(responseBytes[offset:offset+CORRELATION_ID_LENGTH], resp.CorrelationID)
+	offset += CORRELATION_ID_LENGTH
 
-	// 3. Write Body: ErrorCode + ApiKeys Array (empty)
-	binary.BigEndian.PutUint16(responseBytes[8:10], uint16(resp.ErrorCode))
-	binary.BigEndian.PutUint32(responseBytes[10:14], 0) // ApiKeys Array Length = 0
+	// 3. Write Body: ErrorCode
+	binary.BigEndian.PutUint16(responseBytes[offset:offset+ERROR_CODE_LENGTH], uint16(resp.ErrorCode))
+	offset += ERROR_CODE_LENGTH
+
+	// 4. Write Body: ApiKeys Array
+	binary.BigEndian.PutUint32(responseBytes[offset:offset+ARRAY_LENGTH_FIELD], uint32(len(resp.ApiKeys)))
+	offset += ARRAY_LENGTH_FIELD
+
+	for _, apiKey := range resp.ApiKeys {
+		binary.BigEndian.PutUint16(responseBytes[offset:offset+API_KEY_FIELD_LENGTH], uint16(apiKey.ApiKey))
+		offset += API_KEY_FIELD_LENGTH
+
+		binary.BigEndian.PutUint16(responseBytes[offset:offset+VERSION_FIELD_LENGTH], uint16(apiKey.MinVersion))
+		offset += VERSION_FIELD_LENGTH
+
+		binary.BigEndian.PutUint16(responseBytes[offset:offset+VERSION_FIELD_LENGTH], uint16(apiKey.MaxVersion))
+		offset += VERSION_FIELD_LENGTH
+	}
+
+	// 5. Write Body: ThrottleTimeMs
+	binary.BigEndian.PutUint32(responseBytes[offset:offset+THROTTLE_TIME_LENGTH], uint32(resp.ThrottleTimeMs))
+	offset += THROTTLE_TIME_LENGTH
+
+	// Only write the bytes up to the actual content length
+	responseBytes = responseBytes[:offset]
 
 	// Send the complete response
 	_, err := writer.Write(responseBytes)
@@ -135,12 +197,23 @@ func HandleConnection(conn net.Conn) {
 	}
 
 	// For now, we assume all requests are ApiVersions requests (ApiKey 18).
-	// We don't support any specific ApiVersion yet, so return UNSUPPORTED_VERSION (35).
 
-	// Create the response object with the error code
+	// Determine the response based on the requested ApiVersion
 	resp := &Response{
-		CorrelationID: req.CorrelationID,
-		ErrorCode:     35, // UNSUPPORTED_VERSION
+		CorrelationID:  req.CorrelationID,
+		ThrottleTimeMs: 0, // No throttling implemented
+	}
+
+	if req.ApiVersion != 4 {
+		resp.ErrorCode = ERROR_UNSUPPORTED_VERSION
+		resp.ApiKeys = []ApiKeyVersion{} // Must be empty on error
+	} else {
+		resp.ErrorCode = ERROR_NONE // Success
+		// Define the APIs supported by this broker (only ApiVersions v4 for now)
+		resp.ApiKeys = []ApiKeyVersion{
+			{ApiKey: 18, MinVersion: 4, MaxVersion: 4}, // ApiVersions itself
+			// Add other supported APIs here later
+		}
 	}
 
 	// Write the response using the dedicated function

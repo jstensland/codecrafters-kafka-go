@@ -222,10 +222,17 @@ func TestHandleConnection(t *testing.T) {
 				0x12, 0x34, 0x56, 0x78, // CorrelationID = 305419896
 			}),
 			expectedOutput: []byte{
-				0x00, 0x00, 0x00, 0x0a, // Size = 10 (CorrelationID + ErrorCode + ArrayLength)
+				// Size = 20 (Header 4 + Body 16)
+				// Header = CorrelationID (4)
+				// Body = ErrorCode(2) + ArrayLen(4) + ApiKeyEntry(6) + ThrottleTime(4) = 16
+				0x00, 0x00, 0x00, 0x14, // Size = 20
 				0x12, 0x34, 0x56, 0x78, // CorrelationID = 305419896
-				0x00, 0x23, // ErrorCode = 35 (UNSUPPORTED_VERSION)
-				0x00, 0x00, 0x00, 0x00, // ApiKeys Array Length = 0
+				0x00, 0x00, // ErrorCode = 0 (Success)
+				0x00, 0x00, 0x00, 0x01, // ApiKeys Array Length = 1
+				0x00, 0x12, // ApiKey = 18 (ApiVersions)
+				0x00, 0x04, // MinVersion = 4
+				0x00, 0x04, // MaxVersion = 4
+				0x00, 0x00, 0x00, 0x00, // ThrottleTimeMs = 0
 			},
 			writer:         &bytes.Buffer{}, // Use a standard buffer for output capture
 			expectWriteErr: false,
@@ -260,8 +267,28 @@ func TestHandleConnection(t *testing.T) {
 			expectWriteErr: true, // WriteResponse should return an error
 			expectEOF:      false,
 		},
+		{
+			name: "Unsupported ApiVersion",
+			inputData: createInput([]byte{
+				0x00, 0x12, // ApiKey = 18
+				0x00, 0x03, // ApiVersion = 3 (Unsupported)
+				0x87, 0x65, 0x43, 0x21, // CorrelationID = 2271560481
+			}),
+			expectedOutput: []byte{
+				// Size = 14 (Header 4 + Body 10)
+				// Header = CorrelationID (4)
+				// Body = ErrorCode(2) + ArrayLen(4) + ThrottleTime(4) = 10
+				0x00, 0x00, 0x00, 0x0e, // Size = 14
+				0x87, 0x65, 0x43, 0x21, // CorrelationID = 2271560481
+				0x00, 0x23, // ErrorCode = 35 (UNSUPPORTED_VERSION)
+				0x00, 0x00, 0x00, 0x00, // ApiKeys Array Length = 0
+				0x00, 0x00, 0x00, 0x00, // ThrottleTimeMs = 0
+			},
+			writer:         &bytes.Buffer{},
+			expectWriteErr: false,
+			expectEOF:      false,
+		},
 	}
-
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			inputReader := bytes.NewReader(tc.inputData)
@@ -292,6 +319,122 @@ func TestHandleConnection(t *testing.T) {
 			// Check if the connection was closed
 			if !conn.closed {
 				t.Errorf("Expected connection to be closed, but it wasn't")
+			}
+		})
+	}
+}
+
+func TestWriteResponse(t *testing.T) {
+	testCases := []struct {
+		name           string
+		response       *Response
+		expectedOutput []byte
+		writer         io.Writer // Use bytes.Buffer or errorWriter
+		expectedErr    error
+	}{
+		{
+			name: "Successful Response - Single API Key",
+			response: &Response{
+				CorrelationID: 12345,
+				ErrorCode:     0,
+				ApiKeys: []ApiKeyVersion{
+					{ApiKey: 18, MinVersion: 4, MaxVersion: 4},
+				},
+				ThrottleTimeMs: 0,
+			},
+			expectedOutput: []byte{
+				// Size = 20 (Header 4 + Body 16)
+				0x00, 0x00, 0x00, 0x14, // Size = 20
+				0x00, 0x00, 0x30, 0x39, // CorrelationID = 12345
+				0x00, 0x00, // ErrorCode = 0
+				0x00, 0x00, 0x00, 0x01, // ApiKeys Array Length = 1
+				0x00, 0x12, // ApiKey = 18
+				0x00, 0x04, // MinVersion = 4
+				0x00, 0x04, // MaxVersion = 4
+				0x00, 0x00, 0x00, 0x00, // ThrottleTimeMs = 0
+			},
+			writer:      &bytes.Buffer{},
+			expectedErr: nil,
+		},
+		{
+			name: "Successful response with multiple API keys",
+			response: &Response{
+				CorrelationID: 54321,
+				ErrorCode:     0,
+				ApiKeys: []ApiKeyVersion{
+					{ApiKey: 0, MinVersion: 1, MaxVersion: 9},  // Produce
+					{ApiKey: 1, MinVersion: 1, MaxVersion: 13}, // Fetch
+					{ApiKey: 18, MinVersion: 0, MaxVersion: 4}, // ApiVersions
+				},
+				ThrottleTimeMs: 100, // Example throttle time
+			},
+			expectedOutput: []byte{
+				// Size = 38 (Header 4 + Body 34)
+				// Body = Err(2) + Len(4) + Key1(6) + Key2(6) + Key3(6) + Throttle(4) = 34
+				0x00, 0x00, 0x00, 0x26, // Size = 38
+				0x00, 0x00, 0xD4, 0x31, // CorrelationID = 54321
+				0x00, 0x00, // ErrorCode = 0
+				0x00, 0x00, 0x00, 0x03, // ApiKeys Array Length = 3
+				0x00, 0x00, 0x00, 0x01, 0x00, 0x09, // Produce v1-9
+				0x00, 0x01, 0x00, 0x01, 0x00, 0x0D, // Fetch v1-13
+				0x00, 0x12, 0x00, 0x00, 0x00, 0x04, // ApiVersions v0-4
+				0x00, 0x00, 0x00, 0x64, // ThrottleTimeMs = 100
+			},
+			writer:      &bytes.Buffer{},
+			expectedErr: nil,
+		},
+		{
+			name: "Error Response - Unsupported Version",
+			response: &Response{
+				CorrelationID:  9876,
+				ErrorCode:      35,                // UNSUPPORTED_VERSION
+				ApiKeys:        []ApiKeyVersion{}, // Must be empty
+				ThrottleTimeMs: 0,
+			},
+			expectedOutput: []byte{
+				// Size = 14 (Header 4 + Body 10)
+				// Body = Err(2) + Len(4) + Throttle(4) = 10
+				0x00, 0x00, 0x00, 0x0e, // Size = 14
+				0x00, 0x00, 0x26, 0x94, // CorrelationID = 9876
+				0x00, 0x23, // ErrorCode = 35
+				0x00, 0x00, 0x00, 0x00, // ApiKeys Array Length = 0
+				0x00, 0x00, 0x00, 0x00, // ThrottleTimeMs = 0
+			},
+			writer:      &bytes.Buffer{},
+			expectedErr: nil,
+		},
+		{
+			name: "Write Error",
+			response: &Response{ // Content doesn't matter much here
+				CorrelationID:  111,
+				ErrorCode:      0,
+				ApiKeys:        []ApiKeyVersion{{ApiKey: 18, MinVersion: 4, MaxVersion: 4}},
+				ThrottleTimeMs: 0,
+			},
+			expectedOutput: []byte{}, // No output expected
+			writer:         &errorWriter{err: errors.New("failed to write")},
+			expectedErr:    errors.New("writing response: failed to write"), // Expect wrapped error
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := WriteResponse(tc.writer, tc.response)
+
+			// Check error
+			if tc.expectedErr != nil {
+				if err == nil || err.Error() != tc.expectedErr.Error() {
+					t.Errorf("Expected error '%v', got '%v'", tc.expectedErr, err)
+				}
+			} else if err != nil {
+				t.Errorf("Expected no error, got '%v'", err)
+			}
+
+			// Check output if using bytes.Buffer and no error expected
+			if buf, ok := tc.writer.(*bytes.Buffer); ok && tc.expectedErr == nil {
+				if !bytes.Equal(buf.Bytes(), tc.expectedOutput) {
+					t.Errorf("Output mismatch:\nExpected: %x\nGot:      %x", tc.expectedOutput, buf.Bytes())
+				}
 			}
 		})
 	}
