@@ -17,6 +17,11 @@ type Request struct {
 	RemainingBytes []byte // The rest of the payload after the header fields
 }
 
+// Response represents the structure of a basic Kafka response header
+type Response struct {
+	CorrelationID uint32
+}
+
 // ParseRequest reads from the reader and parses the Kafka request header
 func ParseRequest(reader io.Reader) (*Request, error) {
 	// 1. Read the message size (first 4 bytes)
@@ -56,6 +61,21 @@ func ParseRequest(reader io.Reader) (*Request, error) {
 	}
 
 	return req, nil
+}
+
+// WriteResponse serializes and writes the response to the given writer
+func WriteResponse(writer io.Writer, resp *Response) error {
+	// Construct the response using the Correlation ID from the Response struct
+	responseBytes := make([]byte, 8)
+	binary.BigEndian.PutUint32(responseBytes[0:4], 4)                 // Size = 4 bytes (only CorrelationID)
+	binary.BigEndian.PutUint32(responseBytes[4:8], resp.CorrelationID) // Use Correlation ID from struct
+
+	// Send the response
+	_, err := writer.Write(responseBytes)
+	if err != nil {
+		return fmt.Errorf("writing response: %w", err)
+	}
+	return nil
 }
 
 func main() {
@@ -98,14 +118,14 @@ func HandleConnection(conn net.Conn) {
 		return // Stop processing on error
 	}
 
-	// Construct the response using the parsed Correlation ID
-	response := make([]byte, 8)
-	binary.BigEndian.PutUint32(response[0:4], 4)                 // Size = 4 bytes
-	binary.BigEndian.PutUint32(response[4:8], req.CorrelationID) // Use extracted Correlation ID
+	// Create the response object
+	resp := &Response{
+		CorrelationID: req.CorrelationID,
+	}
 
-	// Send the response
-	_, writeErr := conn.Write(response)
-	if writeErr != nil {
-		fmt.Println("Error writing response:", writeErr.Error())
+	// Write the response using the dedicated function
+	err = WriteResponse(conn, resp)
+	if err != nil {
+		fmt.Println("Error writing response:", err.Error())
 	}
 }

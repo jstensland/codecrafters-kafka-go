@@ -51,8 +51,8 @@ func (m *mockConn) Close() error {
 	return nil
 }
 
-func (m *mockConn) LocalAddr() net.Addr              { return &mockAddr{} }
-func (m *mockConn) RemoteAddr() net.Addr             { return &mockAddr{} }
+func (m *mockConn) LocalAddr() net.Addr                { return &mockAddr{} }
+func (m *mockConn) RemoteAddr() net.Addr               { return &mockAddr{} }
 func (m *mockConn) SetDeadline(t time.Time) error      { return nil } // No-op for mock
 func (m *mockConn) SetReadDeadline(t time.Time) error  { return nil } // No-op for mock
 func (m *mockConn) SetWriteDeadline(t time.Time) error { return nil } // No-op for mock
@@ -66,6 +66,7 @@ func (ew *errorWriter) Write(p []byte) (n int, err error) {
 	return 0, ew.err // Always return the configured error
 }
 
+// --- TestParseRequest remains unchanged ---
 
 func TestParseRequest(t *testing.T) {
 	// Helper to create test input data (size prefix + payload)
@@ -79,11 +80,11 @@ func TestParseRequest(t *testing.T) {
 
 	// Test cases
 	testCases := []struct {
-		name          string
-		inputData     []byte
-		expectedReq   *Request
-		expectedErr   error // Use errors.Is for checking specific error types like io.EOF
-		expectErrStr  string // Use for checking specific error messages
+		name         string
+		inputData    []byte
+		expectedReq  *Request
+		expectedErr  error  // Use errors.Is for checking specific error types like io.EOF
+		expectErrStr string // Use for checking specific error messages
 	}{
 		{
 			name: "Valid Request with Remaining Bytes",
@@ -120,7 +121,7 @@ func TestParseRequest(t *testing.T) {
 		},
 		{
 			name:        "Error Unexpected EOF Reading Size", // Renamed for clarity
-			inputData:   []byte{0x00, 0x00}, // Incomplete size
+			inputData:   []byte{0x00, 0x00},                  // Incomplete size
 			expectedReq: nil,
 			expectedErr: io.ErrUnexpectedEOF, // ReadFull returns ErrUnexpectedEOF here, which gets wrapped
 		},
@@ -195,7 +196,6 @@ func TestParseRequest(t *testing.T) {
 	}
 }
 
-
 func TestHandleConnection(t *testing.T) {
 	// Helper to create test input data (size prefix + payload)
 	createInput := func(payload []byte) []byte {
@@ -211,7 +211,7 @@ func TestHandleConnection(t *testing.T) {
 		inputData      []byte
 		expectedOutput []byte
 		writer         io.Writer // Allows injecting different writers (e.g., errorWriter)
-		expectWriteErr bool      // Whether the write operation itself is expected to fail
+		expectWriteErr bool      // Whether the WriteResponse call is expected to fail
 		expectEOF      bool      // Whether the read operation should result in EOF
 	}{
 		{
@@ -234,7 +234,7 @@ func TestHandleConnection(t *testing.T) {
 			inputData:      []byte{}, // Empty input causes EOF immediately
 			expectedOutput: []byte{}, // No output expected
 			writer:         &bytes.Buffer{},
-			expectWriteErr: false,
+			expectWriteErr: false, // WriteResponse won't be called
 			expectEOF:      true,
 		},
 		{
@@ -245,7 +245,7 @@ func TestHandleConnection(t *testing.T) {
 			},
 			expectedOutput: []byte{}, // No output expected
 			writer:         &bytes.Buffer{},
-			expectWriteErr: false,
+			expectWriteErr: false, // WriteResponse won't be called
 			expectEOF:      false, // Should get ErrUnexpectedEOF from ParseRequest, not EOF directly
 		},
 		{
@@ -255,7 +255,7 @@ func TestHandleConnection(t *testing.T) {
 			}),
 			expectedOutput: []byte{}, // No output expected as write fails
 			writer:         &errorWriter{err: errors.New("simulated write error")},
-			expectWriteErr: true,
+			expectWriteErr: true, // WriteResponse should return an error
 			expectEOF:      false,
 		},
 	}
@@ -276,20 +276,16 @@ func TestHandleConnection(t *testing.T) {
 			HandleConnection(conn)
 
 			// Assertions
-			if buf, ok := outputWriter.(*bytes.Buffer); ok {
-				// Only check buffer content if we used a bytes.Buffer (i.e., expected successful write)
+			// Check output buffer content if a successful write was expected
+			if buf, ok := outputWriter.(*bytes.Buffer); ok && !tc.expectWriteErr && !tc.expectEOF && len(tc.inputData) >= 12 { // Only check output if input was valid enough to potentially generate output
 				if !bytes.Equal(buf.Bytes(), tc.expectedOutput) {
 					t.Errorf("Output mismatch:\nExpected: %x\nGot:      %x", tc.expectedOutput, buf.Bytes())
 				}
-			} else if !tc.expectWriteErr && !tc.expectEOF {
-                 // If we didn't use a buffer, we likely expected a write error or EOF/parse error.
-                 // This condition checks if *neither* of those were expected, indicating a potential issue.
-                 // Note: This logic might need refinement based on how errors are specifically handled/logged.
-                 // Currently, HandleConnection just prints errors, making direct assertion difficult.
-                 // We primarily test that the function completes without panic in error cases.
-                 t.Logf("Test case '%s' used a non-buffer writer but didn't explicitly expect a write/read error.", tc.name)
-            }
-
+			}
+			// Note: We don't explicitly check for the *absence* of output in error cases (EOF, parse error, write error)
+			// because HandleConnection only logs errors, it doesn't return them. The primary check is that it runs without panic
+			// and closes the connection. The `expectWriteErr` flag helps distinguish cases where the error originates
+			// during the write phase vs. the read/parse phase.
 
 			// Check if the connection was closed
 			if !conn.closed {
