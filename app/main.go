@@ -17,9 +17,11 @@ type Request struct {
 	RemainingBytes []byte // The rest of the payload after the header fields
 }
 
-// Response represents the structure of a basic Kafka response header
+// Response represents the structure of a Kafka ApiVersions response
+// For now, it only includes fields necessary for an error response.
 type Response struct {
 	CorrelationID uint32
+	ErrorCode     int16 // Error code (e.g., 35 for UNSUPPORTED_VERSION)
 }
 
 // ParseRequest reads from the reader and parses the Kafka request header
@@ -63,14 +65,28 @@ func ParseRequest(reader io.Reader) (*Request, error) {
 	return req, nil
 }
 
-// WriteResponse serializes and writes the response to the given writer
+// WriteResponse serializes and writes the ApiVersions response (including error code) to the given writer
 func WriteResponse(writer io.Writer, resp *Response) error {
-	// Construct the response using the Correlation ID from the Response struct
-	responseBytes := make([]byte, 8)
-	binary.BigEndian.PutUint32(responseBytes[0:4], 4)                 // Size = 4 bytes (only CorrelationID)
-	binary.BigEndian.PutUint32(responseBytes[4:8], resp.CorrelationID) // Use Correlation ID from struct
+	// ApiVersions Response Body: ErrorCode (int16), ApiKeys Array Length (int32)
+	// Since we return an error, ApiKeys array is empty (length 0).
+	responseBodySize := 2 + 4                                  // ErrorCode + Array Length
+	responseHeaderSize := 4                                    // CorrelationID
+	totalSize := uint32(responseHeaderSize + responseBodySize) // Total size excluding the size field itself
 
-	// Send the response
+	// Total buffer size = Size field (4) + CorrelationID (4) + ErrorCode (2) + Array Length (4) = 14
+	responseBytes := make([]byte, 4+totalSize)
+
+	// 1. Write Total Size (excluding itself)
+	binary.BigEndian.PutUint32(responseBytes[0:4], totalSize)
+
+	// 2. Write Header: Correlation ID
+	binary.BigEndian.PutUint32(responseBytes[4:8], resp.CorrelationID)
+
+	// 3. Write Body: ErrorCode + ApiKeys Array (empty)
+	binary.BigEndian.PutUint16(responseBytes[8:10], uint16(resp.ErrorCode))
+	binary.BigEndian.PutUint32(responseBytes[10:14], 0) // ApiKeys Array Length = 0
+
+	// Send the complete response
 	_, err := writer.Write(responseBytes)
 	if err != nil {
 		return fmt.Errorf("writing response: %w", err)
@@ -118,9 +134,13 @@ func HandleConnection(conn net.Conn) {
 		return // Stop processing on error
 	}
 
-	// Create the response object
+	// For now, we assume all requests are ApiVersions requests (ApiKey 18).
+	// We don't support any specific ApiVersion yet, so return UNSUPPORTED_VERSION (35).
+
+	// Create the response object with the error code
 	resp := &Response{
 		CorrelationID: req.CorrelationID,
+		ErrorCode:     35, // UNSUPPORTED_VERSION
 	}
 
 	// Write the response using the dedicated function

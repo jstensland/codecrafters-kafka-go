@@ -222,8 +222,10 @@ func TestHandleConnection(t *testing.T) {
 				0x12, 0x34, 0x56, 0x78, // CorrelationID = 305419896
 			}),
 			expectedOutput: []byte{
-				0x00, 0x00, 0x00, 0x04, // Size = 4
+				0x00, 0x00, 0x00, 0x0a, // Size = 10 (CorrelationID + ErrorCode + ArrayLength)
 				0x12, 0x34, 0x56, 0x78, // CorrelationID = 305419896
+				0x00, 0x23, // ErrorCode = 35 (UNSUPPORTED_VERSION)
+				0x00, 0x00, 0x00, 0x00, // ApiKeys Array Length = 0
 			},
 			writer:         &bytes.Buffer{}, // Use a standard buffer for output capture
 			expectWriteErr: false,
