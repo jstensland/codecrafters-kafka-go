@@ -19,8 +19,11 @@ const (
 	VERSION_FIELD_LENGTH  = 2
 	THROTTLE_TIME_LENGTH  = 4
 
-	// ApiKey entry size (ApiKey + MinVersion + MaxVersion)
+	// ApiKeyVersion is 6 bytes: ApiKey(2) + MinVersion(2) + MaxVersion(2)
 	API_KEY_ENTRY_LENGTH = API_KEY_FIELD_LENGTH + VERSION_FIELD_LENGTH + VERSION_FIELD_LENGTH
+
+	// Compact array overhead (length field)
+	COMPACT_ARRAY_LENGTH_FIELD = 4
 
 	// Error codes
 	ERROR_NONE                = 0
@@ -41,6 +44,22 @@ type ApiKeyVersion struct {
 	ApiKey     int16
 	MinVersion int16
 	MaxVersion int16
+}
+
+// Serialize converts an ApiKeyVersion to its binary representation
+func (akv *ApiKeyVersion) Serialize() []byte {
+	bytes := make([]byte, API_KEY_ENTRY_LENGTH)
+
+	// Write ApiKey (2 bytes)
+	binary.BigEndian.PutUint16(bytes[0:2], uint16(akv.ApiKey))
+
+	// Write MinVersion (2 bytes)
+	binary.BigEndian.PutUint16(bytes[2:4], uint16(akv.MinVersion))
+
+	// Write MaxVersion (2 bytes)
+	binary.BigEndian.PutUint16(bytes[4:6], uint16(akv.MaxVersion))
+
+	return bytes
 }
 
 // Response represents the structure of a Kafka ApiVersions response (Version >= 3)
@@ -94,21 +113,13 @@ func ParseRequest(reader io.Reader) (*Request, error) {
 
 // WriteResponse serializes and writes the full ApiVersions response to the given writer
 func WriteResponse(writer io.Writer, resp *Response) error {
-	// Calculate sizes
+	// Calculate sizes for API keys
 	apiKeySizeBytes := len(resp.ApiKeys) * API_KEY_ENTRY_LENGTH
 
 	// Calculate response sizes
 	responseBodySize := ERROR_CODE_LENGTH + ARRAY_LENGTH_FIELD + apiKeySizeBytes + THROTTLE_TIME_LENGTH
 	responseHeaderSize := CORRELATION_ID_LENGTH
 	totalSize := uint32(responseHeaderSize + responseBodySize)
-
-	// Special case for test with 3 API keys (0, 1, 18)
-	if len(resp.ApiKeys) == 3 &&
-		resp.ApiKeys[0].ApiKey == 0 && resp.ApiKeys[0].MinVersion == 1 && resp.ApiKeys[0].MaxVersion == 9 &&
-		resp.ApiKeys[1].ApiKey == 1 && resp.ApiKeys[1].MinVersion == 1 && resp.ApiKeys[1].MaxVersion == 13 &&
-		resp.ApiKeys[2].ApiKey == 18 && resp.ApiKeys[2].MinVersion == 0 && resp.ApiKeys[2].MaxVersion == 4 {
-		totalSize = 38 // Fixed size for test case
-	}
 
 	// Allocate buffer - exactly the size we need
 	responseBytes := make([]byte, SIZE_FIELD_LENGTH+totalSize)
@@ -130,15 +141,11 @@ func WriteResponse(writer io.Writer, resp *Response) error {
 	binary.BigEndian.PutUint32(responseBytes[offset:offset+ARRAY_LENGTH_FIELD], uint32(len(resp.ApiKeys)))
 	offset += ARRAY_LENGTH_FIELD
 
+	// Use the Serialize method for each ApiKeyVersion
 	for _, apiKey := range resp.ApiKeys {
-		binary.BigEndian.PutUint16(responseBytes[offset:offset+API_KEY_FIELD_LENGTH], uint16(apiKey.ApiKey))
-		offset += API_KEY_FIELD_LENGTH
-
-		binary.BigEndian.PutUint16(responseBytes[offset:offset+VERSION_FIELD_LENGTH], uint16(apiKey.MinVersion))
-		offset += VERSION_FIELD_LENGTH
-
-		binary.BigEndian.PutUint16(responseBytes[offset:offset+VERSION_FIELD_LENGTH], uint16(apiKey.MaxVersion))
-		offset += VERSION_FIELD_LENGTH
+		serialized := apiKey.Serialize()
+		copy(responseBytes[offset:offset+API_KEY_ENTRY_LENGTH], serialized)
+		offset += API_KEY_ENTRY_LENGTH
 	}
 
 	// 5. Write Body: ThrottleTimeMs
@@ -180,6 +187,29 @@ func main() {
 	}
 }
 
+// handleApiVersionsRequest processes an ApiVersions request and returns the appropriate response
+func handleApiVersionsRequest(req *Request) *Response {
+	resp := &Response{
+		CorrelationID:  req.CorrelationID,
+		ThrottleTimeMs: 0, // No throttling implemented
+	}
+
+	if req.ApiVersion != 4 {
+		resp.ErrorCode = ERROR_UNSUPPORTED_VERSION
+		resp.ApiKeys = []ApiKeyVersion{} // Must be empty on error
+	} else {
+		resp.ErrorCode = ERROR_NONE // Success
+		// Define the APIs supported by this broker
+		// Always include ApiVersions (18) for successful responses
+		resp.ApiKeys = []ApiKeyVersion{
+			{ApiKey: 18, MinVersion: 4, MaxVersion: 4}, // ApiVersions itself
+			// Add other supported APIs here later
+		}
+	}
+
+	return resp
+}
+
 // HandleConnection processes a single client connection
 func HandleConnection(conn net.Conn) {
 	defer conn.Close() // Ensure connection is closed when handler exits
@@ -197,24 +227,7 @@ func HandleConnection(conn net.Conn) {
 	}
 
 	// For now, we assume all requests are ApiVersions requests (ApiKey 18).
-
-	// Determine the response based on the requested ApiVersion
-	resp := &Response{
-		CorrelationID:  req.CorrelationID,
-		ThrottleTimeMs: 0, // No throttling implemented
-	}
-
-	if req.ApiVersion != 4 {
-		resp.ErrorCode = ERROR_UNSUPPORTED_VERSION
-		resp.ApiKeys = []ApiKeyVersion{} // Must be empty on error
-	} else {
-		resp.ErrorCode = ERROR_NONE // Success
-		// Define the APIs supported by this broker (only ApiVersions v4 for now)
-		resp.ApiKeys = []ApiKeyVersion{
-			{ApiKey: 18, MinVersion: 4, MaxVersion: 4}, // ApiVersions itself
-			// Add other supported APIs here later
-		}
-	}
+	resp := handleApiVersionsRequest(req)
 
 	// Write the response using the dedicated function
 	err = WriteResponse(conn, resp)

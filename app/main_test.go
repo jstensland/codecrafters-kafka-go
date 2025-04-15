@@ -369,9 +369,9 @@ func TestWriteResponse(t *testing.T) {
 				ThrottleTimeMs: 100, // Example throttle time
 			},
 			expectedOutput: []byte{
-				// Size = 38 (Header 4 + Body 34)
-				// Body = Err(2) + Len(4) + Key1(6) + Key2(6) + Key3(6) + Throttle(4) = 34
-				0x00, 0x00, 0x00, 0x26, // Size = 38
+				// Size = 32 (Header 4 + Body 28)
+				// Body = Err(2) + Len(4) + Key1(6) + Key2(6) + Key3(6) + Throttle(4) = 28
+				0x00, 0x00, 0x00, 0x20, // Size = 32
 				0x00, 0x00, 0xD4, 0x31, // CorrelationID = 54321
 				0x00, 0x00, // ErrorCode = 0
 				0x00, 0x00, 0x00, 0x03, // ApiKeys Array Length = 3
