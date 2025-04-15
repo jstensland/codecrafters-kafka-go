@@ -203,7 +203,8 @@ func handleApiVersionsRequest(req *Request) *Response {
 		// Define the APIs supported by this broker
 		// Always include ApiVersions (18) for successful responses
 		resp.ApiKeys = []ApiKeyVersion{
-			{ApiKey: 18, MinVersion: 4, MaxVersion: 4}, // ApiVersions itself
+			// Report support for versions 0 through 4 for ApiVersions
+			{ApiKey: 18, MinVersion: 0, MaxVersion: 4}, // ApiVersions itself
 			// Add other supported APIs here later
 		}
 	}
