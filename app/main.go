@@ -18,6 +18,7 @@ const (
 	API_KEY_FIELD_LENGTH  = 2
 	VERSION_FIELD_LENGTH  = 2
 	THROTTLE_TIME_LENGTH  = 4
+	TAGGED_FIELDS_LENGTH  = 1 // UVarint 0 for empty tagged fields
 
 	// ApiKeyVersion is 6 bytes: ApiKey(2) + MinVersion(2) + MaxVersion(2)
 	API_KEY_ENTRY_LENGTH = API_KEY_FIELD_LENGTH + VERSION_FIELD_LENGTH + VERSION_FIELD_LENGTH
@@ -116,12 +117,12 @@ func WriteResponse(writer io.Writer, resp *Response) error {
 	// Calculate sizes for API keys
 	apiKeySizeBytes := len(resp.ApiKeys) * API_KEY_ENTRY_LENGTH
 
-	// Calculate response sizes
-	responseBodySize := ERROR_CODE_LENGTH + ARRAY_LENGTH_FIELD + apiKeySizeBytes + THROTTLE_TIME_LENGTH
+	// Calculate response sizes (including the single byte for empty tagged fields)
+	responseBodySize := ERROR_CODE_LENGTH + ARRAY_LENGTH_FIELD + apiKeySizeBytes + THROTTLE_TIME_LENGTH + TAGGED_FIELDS_LENGTH
 	responseHeaderSize := CORRELATION_ID_LENGTH
-	totalSize := uint32(responseHeaderSize + responseBodySize + SIZE_FIELD_LENGTH)
+	totalSize := uint32(responseHeaderSize + responseBodySize) // Size *excluding* the initial size field itself
 
-	// Allocate buffer - exactly the size we need
+	// Allocate buffer - exactly the size we need (Size field + rest of the message)
 	responseBytes := make([]byte, SIZE_FIELD_LENGTH+totalSize)
 	offset := 0
 
@@ -152,12 +153,10 @@ func WriteResponse(writer io.Writer, resp *Response) error {
 	binary.BigEndian.PutUint32(responseBytes[offset:offset+THROTTLE_TIME_LENGTH], uint32(resp.ThrottleTimeMs))
 	offset += THROTTLE_TIME_LENGTH
 
-	// Only write the bytes up to the actual content length
-	responseBytes = responseBytes[:offset]
+	// 6. Write Body: Tagged Fields (UVarint 0 indicates none)
+	responseBytes[offset] = 0 // The UVarint encoding for 0 is a single byte 0
 
-	fmt.Printf("Calculated message length: %v\n", totalSize)
-	fmt.Printf("Response size: %d bytes\n", len(responseBytes))
-	// Send the complete response
+	// Send the complete response (already correctly sized)
 	_, err := writer.Write(responseBytes)
 	if err != nil {
 		return fmt.Errorf("writing response: %w", err)
