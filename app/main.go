@@ -17,8 +17,8 @@ const (
 	ARRAY_LENGTH_FIELD    = 4
 	API_KEY_FIELD_LENGTH  = 2
 	VERSION_FIELD_LENGTH  = 2
-	THROTTLE_TIME_LENGTH  = 4
-	TAGGED_FIELDS_LENGTH  = 1 // UVarint 0 for empty tagged fields
+	// THROTTLE_TIME_LENGTH  = 4
+	TAGGED_FIELDS_LENGTH = 1 // UVarint 0 for empty tagged fields
 
 	// ApiKeyVersion is 6 bytes: ApiKey(2) + MinVersion(2) + MaxVersion(2)
 	API_KEY_ENTRY_LENGTH = API_KEY_FIELD_LENGTH + VERSION_FIELD_LENGTH + VERSION_FIELD_LENGTH
@@ -65,11 +65,10 @@ func (akv *ApiKeyVersion) Serialize() []byte {
 
 // Response represents the structure of a Kafka ApiVersions response (Version >= 3)
 type Response struct {
-	CorrelationID  uint32
-	ErrorCode      int16
-	ApiKeys        []ApiKeyVersion
-	ThrottleTimeMs int32 // Included only for response version >= 3
-	ResponseVersion int16 // The version format to use for serialization
+	CorrelationID uint32
+	ErrorCode     int16
+	ApiKeys       []ApiKeyVersion
+	// ThrottleTimeMs int32
 }
 
 // ParseRequest reads from the reader and parses the Kafka request header
@@ -113,23 +112,15 @@ func ParseRequest(reader io.Reader) (*Request, error) {
 	return req, nil
 }
 
-// WriteResponse serializes and writes the ApiVersions response based on resp.ResponseVersion
+// WriteResponse serializes and writes the full ApiVersions response to the given writer
 func WriteResponse(writer io.Writer, resp *Response) error {
 	// Calculate sizes for API keys
 	apiKeySizeBytes := len(resp.ApiKeys) * API_KEY_ENTRY_LENGTH
 
-	// --- Calculate response sizes based on version ---
-	var responseBodySize int
+	// Calculate response sizes (including the single byte for empty tagged fields)
+	// responseBodySize := ERROR_CODE_LENGTH + ARRAY_LENGTH_FIELD + apiKeySizeBytes + THROTTLE_TIME_LENGTH + TAGGED_FIELDS_LENGTH
+	responseBodySize := ERROR_CODE_LENGTH + ARRAY_LENGTH_FIELD + apiKeySizeBytes + TAGGED_FIELDS_LENGTH
 	responseHeaderSize := CORRELATION_ID_LENGTH
-
-	if resp.ResponseVersion <= 2 {
-		// v0-v2 format: ErrorCode + ArrayLength + ApiKeyData
-		responseBodySize = ERROR_CODE_LENGTH + ARRAY_LENGTH_FIELD + apiKeySizeBytes
-	} else {
-		// v3+ format: ErrorCode + ArrayLength + ApiKeyData + ThrottleTime + TaggedFields
-		responseBodySize = ERROR_CODE_LENGTH + ARRAY_LENGTH_FIELD + apiKeySizeBytes + THROTTLE_TIME_LENGTH + TAGGED_FIELDS_LENGTH
-	}
-
 	totalSize := uint32(responseHeaderSize + responseBodySize) // Size *excluding* the initial size field itself
 
 	// Allocate buffer - exactly the size we need (Size field + rest of the message)
@@ -144,44 +135,29 @@ func WriteResponse(writer io.Writer, resp *Response) error {
 	binary.BigEndian.PutUint32(responseBytes[offset:offset+CORRELATION_ID_LENGTH], resp.CorrelationID)
 	offset += CORRELATION_ID_LENGTH
 
-	// --- Response Header Tagged Fields (v1+) ---
-	// ApiVersions response doesn't use header tags, so we omit this for simplicity.
-	// A full implementation would add a TAG_BUFFER (UVarint 0) here for header v1+.
-
 	// 3. Write Body: ErrorCode
 	binary.BigEndian.PutUint16(responseBytes[offset:offset+ERROR_CODE_LENGTH], uint16(resp.ErrorCode))
 	offset += ERROR_CODE_LENGTH
 
-	// 4. Write Body: ApiKeys Array Length (INT32 for all ApiVersions response versions)
+	// 4. Write Body: ApiKeys Array
 	binary.BigEndian.PutUint32(responseBytes[offset:offset+ARRAY_LENGTH_FIELD], uint32(len(resp.ApiKeys)))
 	offset += ARRAY_LENGTH_FIELD
 
-	// 5. Write Body: ApiKeys Array Data
+	// Use the Serialize method for each ApiKeyVersion
 	for _, apiKey := range resp.ApiKeys {
 		serialized := apiKey.Serialize()
 		copy(responseBytes[offset:offset+API_KEY_ENTRY_LENGTH], serialized)
 		offset += API_KEY_ENTRY_LENGTH
 	}
 
-	// --- Write version-specific fields ---
-	if resp.ResponseVersion >= 3 {
-		// 6. Write Body: ThrottleTimeMs (v3+)
-		binary.BigEndian.PutUint32(responseBytes[offset:offset+THROTTLE_TIME_LENGTH], uint32(resp.ThrottleTimeMs))
-		offset += THROTTLE_TIME_LENGTH
+	// // 5. Write Body: ThrottleTimeMs
+	// binary.BigEndian.PutUint32(responseBytes[offset:offset+THROTTLE_TIME_LENGTH], uint32(resp.ThrottleTimeMs))
+	// offset += THROTTLE_TIME_LENGTH
 
-		// 7. Write Body: Tagged Fields (v3+) (UVarint 0 indicates none)
-		responseBytes[offset] = 0 // The UVarint encoding for 0 is a single byte 0
-		offset += TAGGED_FIELDS_LENGTH
-	}
+	// 6. Write Body: Tagged Fields (UVarint 0 indicates none)
+	responseBytes[offset] = 0 // The UVarint encoding for 0 is a single byte 0
 
-	// --- Send the complete response ---
-	// Ensure we have written the exact number of bytes expected
-	expectedWriteSize := SIZE_FIELD_LENGTH + int(totalSize)
-	if offset != expectedWriteSize {
-		// This indicates an internal logic error in size calculation or writing
-		return fmt.Errorf("internal error: wrote %d bytes but expected to write %d", offset, expectedWriteSize)
-	}
-
+	// Send the complete response (already correctly sized)
 	_, err := writer.Write(responseBytes)
 	if err != nil {
 		return fmt.Errorf("writing response: %w", err)
@@ -213,31 +189,24 @@ func main() {
 	}
 }
 
-// handleApiVersionsRequest processes an ApiVersions request.
-// It currently always prepares a v2 response format to work around client decoder issues.
+// handleApiVersionsRequest processes an ApiVersions request and returns the appropriate response
 func handleApiVersionsRequest(req *Request) *Response {
-	// Decide on the response version format. Force v2 for now.
-	responseVersion := int16(2)
-
 	resp := &Response{
-		CorrelationID:   req.CorrelationID,
-		ResponseVersion: responseVersion,
-		// ThrottleTimeMs is omitted for v2 response format during serialization
+		CorrelationID: req.CorrelationID,
+		// ThrottleTimeMs: 0, // No throttling implemented
 	}
 
-	// Check if the requested ApiVersion is one we want to handle.
-	// Even though we respond in v2 format, we might only want to accept certain request versions.
-	// Let's assume we only process ApiVersions v4 requests for now.
-	if req.ApiKey == 18 && req.ApiVersion != 4 { // Check specifically for ApiVersions requests
+	if req.ApiVersion != 4 {
 		resp.ErrorCode = ERROR_UNSUPPORTED_VERSION
 		resp.ApiKeys = []ApiKeyVersion{} // Must be empty on error
 	} else {
-		// Respond successfully using the chosen v2 format
 		resp.ErrorCode = ERROR_NONE // Success
+		// Define the APIs supported by this broker
+		// Always include ApiVersions (18) for successful responses
 		resp.ApiKeys = []ApiKeyVersion{
-			// Report support only up to v2, as we are sending a v2 response
-			{ApiKey: 18, MinVersion: 0, MaxVersion: 2}, // ApiVersions itself
-			// Add other supported APIs here later (ensure max version is compatible)
+			// Report support for versions 0 through 4 for ApiVersions
+			{ApiKey: 18, MinVersion: 0, MaxVersion: 4}, // ApiVersions itself
+			// Add other supported APIs here later
 		}
 	}
 

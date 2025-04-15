@@ -222,17 +222,18 @@ func TestHandleConnection(t *testing.T) {
 				0x12, 0x34, 0x56, 0x78, // CorrelationID = 305419896
 			}),
 			expectedOutput: []byte{
-				// Size = 16 (Header 4 + Body 12) - v2 Format
+				// Size = 21 (Header 4 + Body 17)
 				// Header = CorrelationID (4)
-				// Body = ErrorCode(2) + ArrayLen(4) + ApiKeyEntry(6) = 12
-				0x00, 0x00, 0x00, 0x10, // Size = 16 (4+12)
+				// Body = ErrorCode(2) + ArrayLen(4) + ApiKeyEntry(6) + ThrottleTime(4) + TaggedFields(1) = 17
+				0x00, 0x00, 0x00, 0x15, // Size = 21
 				0x12, 0x34, 0x56, 0x78, // CorrelationID = 305419896
 				0x00, 0x00, // ErrorCode = 0 (Success)
 				0x00, 0x00, 0x00, 0x01, // ApiKeys Array Length = 1
 				0x00, 0x12, // ApiKey = 18 (ApiVersions)
-				0x00, 0x00, // MinVersion = 0
-				0x00, 0x02, // MaxVersion = 2 (as per handleApiVersionsRequest)
-				// No ThrottleTimeMs or Tagged Fields in v2
+				0x00, 0x00, // MinVersion = 0 (Updated in main.go)
+				0x00, 0x04, // MaxVersion = 4 (Updated in main.go)
+				0x00, 0x00, 0x00, 0x00, // ThrottleTimeMs = 0
+				0x00, // Tagged Fields (empty)
 			},
 			writer:         &bytes.Buffer{}, // Use a standard buffer for output capture
 			expectWriteErr: false,
@@ -271,18 +272,19 @@ func TestHandleConnection(t *testing.T) {
 			name: "Unsupported ApiVersion",
 			inputData: createInput([]byte{
 				0x00, 0x12, // ApiKey = 18
-				0x00, 0x03, // ApiVersion = 3 (Now handled by handleApiVersionsRequest)
+				0x00, 0x03, // ApiVersion = 3 (Unsupported)
 				0x87, 0x65, 0x43, 0x21, // CorrelationID = 2271560481
 			}),
 			expectedOutput: []byte{
-				// Size = 10 (Header 4 + Body 6) - v2 Format Error Response
+				// Size = 15 (Header 4 + Body 11)
 				// Header = CorrelationID (4)
-				// Body = ErrorCode(2) + ArrayLen(4) = 6
-				0x00, 0x00, 0x00, 0x0a, // Size = 10
+				// Body = ErrorCode(2) + ArrayLen(4) + ThrottleTime(4) + TaggedFields(1) = 11
+				0x00, 0x00, 0x00, 0x0f, // Size = 15
 				0x87, 0x65, 0x43, 0x21, // CorrelationID = 2271560481
 				0x00, 0x23, // ErrorCode = 35 (UNSUPPORTED_VERSION)
 				0x00, 0x00, 0x00, 0x00, // ApiKeys Array Length = 0
-				// No ThrottleTimeMs or Tagged Fields in v2
+				0x00, 0x00, 0x00, 0x00, // ThrottleTimeMs = 0
+				0x00, // Tagged Fields (empty)
 			},
 			writer:         &bytes.Buffer{},
 			expectWriteErr: false,
@@ -340,19 +342,19 @@ func TestWriteResponse(t *testing.T) {
 				ApiKeys: []ApiKeyVersion{
 					{ApiKey: 18, MinVersion: 4, MaxVersion: 4},
 				},
-				ThrottleTimeMs: 0, // This field is ignored for v2 serialization
-				ResponseVersion: 2, // Explicitly testing v2 format
+				ThrottleTimeMs: 0,
 			},
 			expectedOutput: []byte{
-				// Size = 16 (Header 4 + Body 12) - v2 Format
-				0x00, 0x00, 0x00, 0x10, // Size = 16
+				// Size = 21 (Header 4 + Body 17)
+				0x00, 0x00, 0x00, 0x15, // Size = 21
 				0x00, 0x00, 0x30, 0x39, // CorrelationID = 12345
 				0x00, 0x00, // ErrorCode = 0
 				0x00, 0x00, 0x00, 0x01, // ApiKeys Array Length = 1
 				0x00, 0x12, // ApiKey = 18
-				0x00, 0x04, // MinVersion = 4 (Matching the input response struct)
-				0x00, 0x04, // MaxVersion = 4 (Matching the input response struct)
-				// No ThrottleTimeMs or Tagged Fields in v2
+				0x00, 0x04, // MinVersion = 4
+				0x00, 0x04, // MaxVersion = 4
+				0x00, 0x00, 0x00, 0x00, // ThrottleTimeMs = 0
+				0x00, // Tagged Fields (empty)
 			},
 			writer:      &bytes.Buffer{},
 			expectedErr: nil,
@@ -365,23 +367,22 @@ func TestWriteResponse(t *testing.T) {
 				ApiKeys: []ApiKeyVersion{
 					{ApiKey: 0, MinVersion: 1, MaxVersion: 9},  // Produce
 					{ApiKey: 1, MinVersion: 1, MaxVersion: 13}, // Fetch
-					{ApiKey: 18, MinVersion: 0, MaxVersion: 2}, // ApiVersions (Max v2 for v2 response)
+					{ApiKey: 18, MinVersion: 0, MaxVersion: 4}, // ApiVersions
 				},
-				ThrottleTimeMs: 100, // Ignored for v2 serialization
-				ResponseVersion: 2,  // Explicitly testing v2 format
+				ThrottleTimeMs: 100, // Example throttle time
 			},
 			expectedOutput: []byte{
-				// Size = 28 (Header 4 + Body 24) - v2 Format
-				// Body = Err(2) + Len(4) + Key1(6) + Key2(6) + Key3(6) = 24
-				// Correction: Body size is 2+4+6+6+6 = 24. Header is 4. Total size = 28.
-				0x00, 0x00, 0x00, 0x1c, // Size = 28 (4 + 24)
+				// Size = 33 (Header 4 + Body 29)
+				// Body = Err(2) + Len(4) + Key1(6) + Key2(6) + Key3(6) + Throttle(4) + TaggedFields(1) = 29
+				0x00, 0x00, 0x00, 0x21, // Size = 33
 				0x00, 0x00, 0xD4, 0x31, // CorrelationID = 54321
 				0x00, 0x00, // ErrorCode = 0
 				0x00, 0x00, 0x00, 0x03, // ApiKeys Array Length = 3
 				0x00, 0x00, 0x00, 0x01, 0x00, 0x09, // Produce v1-9
 				0x00, 0x01, 0x00, 0x01, 0x00, 0x0D, // Fetch v1-13
-				0x00, 0x12, 0x00, 0x00, 0x00, 0x02, // ApiVersions v0-2
-				// No ThrottleTimeMs or Tagged Fields in v2
+				0x00, 0x12, 0x00, 0x00, 0x00, 0x04, // ApiVersions v0-4
+				0x00, 0x00, 0x00, 0x64, // ThrottleTimeMs = 100
+				0x00, // Tagged Fields (empty)
 			},
 			writer:      &bytes.Buffer{},
 			expectedErr: nil,
@@ -392,17 +393,17 @@ func TestWriteResponse(t *testing.T) {
 				CorrelationID:  9876,
 				ErrorCode:      35,                // UNSUPPORTED_VERSION
 				ApiKeys:        []ApiKeyVersion{}, // Must be empty
-				ThrottleTimeMs: 0,                 // Ignored for v2 serialization
-				ResponseVersion: 2,                // Explicitly testing v2 format
+				ThrottleTimeMs: 0,
 			},
 			expectedOutput: []byte{
-				// Size = 10 (Header 4 + Body 6) - v2 Format Error Response
-				// Body = Err(2) + Len(4) = 6
-				0x00, 0x00, 0x00, 0x0a, // Size = 10
+				// Size = 15 (Header 4 + Body 11)
+				// Body = Err(2) + Len(4) + Throttle(4) + TaggedFields(1) = 11
+				0x00, 0x00, 0x00, 0x0f, // Size = 15
 				0x00, 0x00, 0x26, 0x94, // CorrelationID = 9876
 				0x00, 0x23, // ErrorCode = 35
 				0x00, 0x00, 0x00, 0x00, // ApiKeys Array Length = 0
-				// No ThrottleTimeMs or Tagged Fields in v2
+				0x00, 0x00, 0x00, 0x00, // ThrottleTimeMs = 0
+				0x00, // Tagged Fields (empty)
 			},
 			writer:      &bytes.Buffer{},
 			expectedErr: nil,
@@ -412,9 +413,8 @@ func TestWriteResponse(t *testing.T) {
 			response: &Response{ // Content doesn't matter much here
 				CorrelationID:  111,
 				ErrorCode:      0,
-				ApiKeys:        []ApiKeyVersion{{ApiKey: 18, MinVersion: 0, MaxVersion: 2}}, // Use v2 compatible versions
-				ThrottleTimeMs: 0, // Ignored
-				ResponseVersion: 2, // Testing v2 format write error
+				ApiKeys:        []ApiKeyVersion{{ApiKey: 18, MinVersion: 4, MaxVersion: 4}},
+				ThrottleTimeMs: 0,
 			},
 			expectedOutput: []byte{}, // No output expected
 			writer:         &errorWriter{err: errors.New("failed to write")},
