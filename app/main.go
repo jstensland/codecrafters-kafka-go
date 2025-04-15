@@ -17,8 +17,8 @@ const (
 	ARRAY_LENGTH_FIELD    = 4
 	API_KEY_FIELD_LENGTH  = 2
 	VERSION_FIELD_LENGTH  = 2
-	THROTTLE_TIME_LENGTH  = 4
-	TAGGED_FIELDS_LENGTH  = 1 // UVarint 0 for empty tagged fields
+	// THROTTLE_TIME_LENGTH  = 4
+	TAGGED_FIELDS_LENGTH = 1 // UVarint 0 for empty tagged fields
 
 	// ApiKeyVersion is 6 bytes: ApiKey(2) + MinVersion(2) + MaxVersion(2)
 	API_KEY_ENTRY_LENGTH = API_KEY_FIELD_LENGTH + VERSION_FIELD_LENGTH + VERSION_FIELD_LENGTH
@@ -65,10 +65,10 @@ func (akv *ApiKeyVersion) Serialize() []byte {
 
 // Response represents the structure of a Kafka ApiVersions response (Version >= 3)
 type Response struct {
-	CorrelationID  uint32
-	ErrorCode      int16
-	ApiKeys        []ApiKeyVersion
-	ThrottleTimeMs int32
+	CorrelationID uint32
+	ErrorCode     int16
+	ApiKeys       []ApiKeyVersion
+	// ThrottleTimeMs int32
 }
 
 // ParseRequest reads from the reader and parses the Kafka request header
@@ -118,7 +118,8 @@ func WriteResponse(writer io.Writer, resp *Response) error {
 	apiKeySizeBytes := len(resp.ApiKeys) * API_KEY_ENTRY_LENGTH
 
 	// Calculate response sizes (including the single byte for empty tagged fields)
-	responseBodySize := ERROR_CODE_LENGTH + ARRAY_LENGTH_FIELD + apiKeySizeBytes + THROTTLE_TIME_LENGTH + TAGGED_FIELDS_LENGTH
+	// responseBodySize := ERROR_CODE_LENGTH + ARRAY_LENGTH_FIELD + apiKeySizeBytes + THROTTLE_TIME_LENGTH + TAGGED_FIELDS_LENGTH
+	responseBodySize := ERROR_CODE_LENGTH + ARRAY_LENGTH_FIELD + apiKeySizeBytes + TAGGED_FIELDS_LENGTH
 	responseHeaderSize := CORRELATION_ID_LENGTH
 	totalSize := uint32(responseHeaderSize + responseBodySize) // Size *excluding* the initial size field itself
 
@@ -149,9 +150,9 @@ func WriteResponse(writer io.Writer, resp *Response) error {
 		offset += API_KEY_ENTRY_LENGTH
 	}
 
-	// 5. Write Body: ThrottleTimeMs
-	binary.BigEndian.PutUint32(responseBytes[offset:offset+THROTTLE_TIME_LENGTH], uint32(resp.ThrottleTimeMs))
-	offset += THROTTLE_TIME_LENGTH
+	// // 5. Write Body: ThrottleTimeMs
+	// binary.BigEndian.PutUint32(responseBytes[offset:offset+THROTTLE_TIME_LENGTH], uint32(resp.ThrottleTimeMs))
+	// offset += THROTTLE_TIME_LENGTH
 
 	// 6. Write Body: Tagged Fields (UVarint 0 indicates none)
 	responseBytes[offset] = 0 // The UVarint encoding for 0 is a single byte 0
@@ -191,8 +192,8 @@ func main() {
 // handleApiVersionsRequest processes an ApiVersions request and returns the appropriate response
 func handleApiVersionsRequest(req *Request) *Response {
 	resp := &Response{
-		CorrelationID:  req.CorrelationID,
-		ThrottleTimeMs: 0, // No throttling implemented
+		CorrelationID: req.CorrelationID,
+		// ThrottleTimeMs: 0, // No throttling implemented
 	}
 
 	if req.ApiVersion != 4 {
