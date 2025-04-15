@@ -119,7 +119,7 @@ func WriteResponse(writer io.Writer, resp *Response) error {
 	// Calculate response sizes
 	responseBodySize := ERROR_CODE_LENGTH + ARRAY_LENGTH_FIELD + apiKeySizeBytes + THROTTLE_TIME_LENGTH
 	responseHeaderSize := CORRELATION_ID_LENGTH
-	totalSize := uint32(responseHeaderSize + responseBodySize)
+	totalSize := uint32(responseHeaderSize + responseBodySize + SIZE_FIELD_LENGTH)
 
 	// Allocate buffer - exactly the size we need
 	responseBytes := make([]byte, SIZE_FIELD_LENGTH+totalSize)
@@ -155,6 +155,8 @@ func WriteResponse(writer io.Writer, resp *Response) error {
 	// Only write the bytes up to the actual content length
 	responseBytes = responseBytes[:offset]
 
+	fmt.Printf("Calculated message length: %v\n", totalSize)
+	fmt.Printf("Response size: %d bytes\n", len(responseBytes))
 	// Send the complete response
 	_, err := writer.Write(responseBytes)
 	if err != nil {
