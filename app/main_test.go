@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"testing"
@@ -11,6 +12,8 @@ import (
 
 	main "github.com/codecrafters-io/kafka-starter-go/app"
 )
+
+var ErrClosingMockConn = errors.New("errors closing mock connection")
 
 // mockAddr satisfies the net.Addr interface for testing.
 // Keep this helper in main_test as it's used by mockConn for HandleConnection tests.
@@ -30,41 +33,59 @@ func (m *mockConn) Read(p []byte) (n int, err error) {
 	if m.closed {
 		return 0, io.ErrClosedPipe
 	}
-	return m.reader.Read(p)
+	n, err = m.reader.Read(p)
+	if err != nil {
+		return n, fmt.Errorf("reading from mock connection: %w", err)
+	}
+	return n, nil
 }
 
 func (m *mockConn) Write(p []byte) (n int, err error) {
 	if m.closed {
 		return 0, io.ErrClosedPipe
 	}
-	return m.writer.Write(p)
+	n, err = m.writer.Write(p)
+	if err != nil {
+		return n, fmt.Errorf("writing to mock connection: %w", err)
+	}
+	return n, nil
 }
 
 func (m *mockConn) Close() error {
 	m.closed = true
+	var errs []error
 	// Simulate closing the reader if it's an io.Closer
 	if closer, ok := m.reader.(io.Closer); ok {
-		closer.Close()
+		if err := closer.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("closing reader: %w", err))
+		}
 	}
+
 	// Simulate closing the writer if it's an io.Closer
 	if closer, ok := m.writer.(io.Closer); ok {
-		closer.Close()
+		if err := closer.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("closing writer: %w", err))
+		}
+	}
+
+	if len(errs) > 0 {
+		return fmt.Errorf("%w: %v", ErrClosingMockConn, errs)
 	}
 	return nil
 }
 
 func (m *mockConn) LocalAddr() net.Addr                { return &mockAddr{} }
 func (m *mockConn) RemoteAddr() net.Addr               { return &mockAddr{} }
-func (m *mockConn) SetDeadline(t time.Time) error      { return nil } // No-op for mock
-func (m *mockConn) SetReadDeadline(t time.Time) error  { return nil } // No-op for mock
-func (m *mockConn) SetWriteDeadline(t time.Time) error { return nil } // No-op for mock
+func (m *mockConn) SetDeadline(_ time.Time) error      { return nil } // No-op for mock
+func (m *mockConn) SetReadDeadline(_ time.Time) error  { return nil } // No-op for mock
+func (m *mockConn) SetWriteDeadline(_ time.Time) error { return nil } // No-op for mock
 
 // errorWriter is a writer that always returns an error.
 type errorWriter struct {
 	err error
 }
 
-func (ew *errorWriter) Write(p []byte) (n int, err error) {
+func (ew *errorWriter) Write(_ []byte) (n int, err error) {
 	return 0, ew.err // Always return the configured error
 }
 
@@ -73,6 +94,7 @@ func TestHandleConnection(t *testing.T) {
 	// Helper to create test input data (size prefix + payload)
 	// Keep this helper local to the test function.
 	createInput := func(payload []byte) []byte {
+		// #nosec G115 -- Conversion is safe in this context
 		size := uint32(len(payload))
 		input := make([]byte, 4+size)
 		binary.BigEndian.PutUint32(input[0:4], size)
@@ -141,7 +163,9 @@ func TestHandleConnection(t *testing.T) {
 				0xAA, 0xBB, 0xCC, 0xDD, // CorrelationID
 			}),
 			expectedOutput: []byte{}, // No output expected as write fails
-			writer:         &errorWriter{err: errors.New("simulated write error")},
+			// Use a static error for simulated write errors
+			writer: &errorWriter{err: errors.New("simulated write error")}, //nolint:err113
+
 			expectWriteErr: true, // protocol.WriteResponse should return an error
 			expectEOF:      false,
 		},

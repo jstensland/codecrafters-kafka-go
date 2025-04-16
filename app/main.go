@@ -1,31 +1,42 @@
+// Package main implements a simple Kafka broker that handles API versions requests.
 package main
 
 import (
 	"errors" // Add errors import for errors.Is
-	"fmt"
 	"io"
+	"log"
 	"net"
 	"os"
 
 	"github.com/codecrafters-io/kafka-starter-go/app/protocol" // Import the new protocol package
 )
 
+// API version constants
+const (
+	apiVersionsV4 = 4 // Supported API version for ApiVersions
+)
+
 func main() {
 	// You can use print statements as follows for debugging, they'll be visible when running tests.
-	fmt.Println("Logs from your program will appear here!")
+	log.Println("Logs from your program will appear here!")
 
 	// Listen on both IPv4 and IPv6
+	// #nosec G102 -- This is intentional for the challenge
 	l, err := net.Listen("tcp", ":9092")
 	if err != nil {
-		fmt.Println("Failed to bind to port 9092")
+		log.Println("Failed to bind to port 9092")
 		os.Exit(1)
 	}
-	defer l.Close() // Ensure listener is closed when main exits
+	defer func() {
+		if err := l.Close(); err != nil {
+			log.Printf("Error closing listener: %v", err)
+		}
+	}() // Ensure listener is closed when main exits
 
 	for {
 		conn, err := l.Accept()
 		if err != nil {
-			fmt.Println("Error accepting connection: ", err.Error())
+			log.Printf("Error accepting connection: %v", err)
 			continue // Continue listening for other connections
 		}
 
@@ -34,8 +45,8 @@ func main() {
 	}
 }
 
-// handleApiVersionsRequest processes an ApiVersions request and returns the appropriate response
-func handleApiVersionsRequest(req *protocol.Request) *protocol.Response {
+// handleAPIVersionsRequest processes an ApiVersions request and returns the appropriate response
+func handleAPIVersionsRequest(req *protocol.Request) *protocol.Response {
 	resp := &protocol.Response{
 		CorrelationID:  req.CorrelationID,
 		ThrottleTimeMs: 0, // No throttling implemented
@@ -45,16 +56,16 @@ func handleApiVersionsRequest(req *protocol.Request) *protocol.Response {
 	// Other versions will result in an UNSUPPORTED_VERSION error.
 	// Note: Kafka protocol allows brokers to support multiple versions.
 	// A real broker would check req.ApiVersion against its supported range.
-	if req.ApiVersion != 4 {
-		resp.ErrorCode = protocol.ERROR_UNSUPPORTED_VERSION
-		resp.ApiKeys = []protocol.ApiKeyVersion{} // Must be empty on error
+	if req.APIVersion != apiVersionsV4 {
+		resp.ErrorCode = protocol.ErrorUnsupportedVersion
+		resp.APIKeys = []protocol.APIKeyVersion{} // Must be empty on error
 	} else {
-		resp.ErrorCode = protocol.ERROR_NONE // Success
+		resp.ErrorCode = protocol.ErrorNone // Success
 		// Define the APIs supported by this broker
 		// Always include ApiVersions (18) for successful responses
-		resp.ApiKeys = []protocol.ApiKeyVersion{
+		resp.APIKeys = []protocol.APIKeyVersion{
 			// Report support for versions 0 through 4 for ApiVersions
-			{ApiKey: protocol.API_KEY_API_VERSIONS, MinVersion: 0, MaxVersion: 4}, // ApiVersions itself
+			{APIKey: protocol.APIKeyAPIVersions, MinVersion: 0, MaxVersion: apiVersionsV4}, // ApiVersions itself
 			// Add other supported APIs here later
 		}
 	}
@@ -64,16 +75,20 @@ func handleApiVersionsRequest(req *protocol.Request) *protocol.Response {
 
 // HandleConnection processes a single client connection
 func HandleConnection(conn net.Conn) {
-	defer conn.Close() // Ensure connection is closed when handler exits
+	defer func() {
+		if err := conn.Close(); err != nil {
+			log.Printf("Error closing connection: %v", err)
+		}
+	}() // Ensure connection is closed when handler exits
 
 	// Parse the incoming request using the protocol package
 	req, err := protocol.ParseRequest(conn)
 	if err != nil {
 		// Handle EOF separately, client might just disconnect
 		if errors.Is(err, io.EOF) { // Use errors.Is for potentially wrapped EOF
-			fmt.Println("Client disconnected gracefully.")
+			log.Println("Client disconnected gracefully.")
 		} else {
-			fmt.Println("Error parsing request:", err.Error())
+			log.Printf("Error parsing request: %v", err)
 		}
 		return // Stop processing on error
 	}
@@ -81,23 +96,23 @@ func HandleConnection(conn net.Conn) {
 	// For now, we only handle ApiVersions requests (ApiKey 18).
 	// A real broker would use req.ApiKey to dispatch to different handlers.
 	var resp *protocol.Response
-	if req.ApiKey == protocol.API_KEY_API_VERSIONS {
-		resp = handleApiVersionsRequest(req)
+	if req.APIKey == protocol.APIKeyAPIVersions {
+		resp = handleAPIVersionsRequest(req)
 	} else {
 		// Handle other API keys or return an error response if unsupported
 		// For now, let's just create a basic error response for unknown keys
 		resp = &protocol.Response{
 			CorrelationID:  req.CorrelationID,
-			ErrorCode:      protocol.ERROR_UNSUPPORTED_VERSION, // Or a more specific error
-			ApiKeys:        []protocol.ApiKeyVersion{},
+			ErrorCode:      protocol.ErrorUnsupportedVersion, // Or a more specific error
+			APIKeys:        []protocol.APIKeyVersion{},
 			ThrottleTimeMs: 0,
 		}
-		fmt.Printf("Received unsupported ApiKey: %d\n", req.ApiKey)
+		log.Printf("Received unsupported ApiKey: %d", req.APIKey)
 	}
 
 	// Write the response using the protocol package function
 	err = protocol.WriteResponse(conn, resp)
 	if err != nil {
-		fmt.Println("Error writing response:", err.Error())
+		log.Printf("Error writing response: %v", err)
 	}
 }

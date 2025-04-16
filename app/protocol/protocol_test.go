@@ -1,4 +1,4 @@
-package protocol
+package protocol_test
 
 import (
 	"bytes"
@@ -7,6 +7,8 @@ import (
 	"io"
 	"reflect"
 	"testing"
+
+	"github.com/codecrafters-io/kafka-starter-go/app/protocol"
 )
 
 // errorWriter is a writer that always returns an error.
@@ -14,13 +16,21 @@ type errorWriter struct {
 	err error
 }
 
-func (ew *errorWriter) Write(p []byte) (n int, err error) {
+// Type aliases for testing
+type (
+	Request       = protocol.Request
+	Response      = protocol.Response
+	APIKeyVersion = protocol.APIKeyVersion
+)
+
+func (ew *errorWriter) Write(_ []byte) (n int, err error) {
 	return 0, ew.err // Always return the configured error
 }
 
-func TestParseRequest(t *testing.T) {
+func TestParseRequest(t *testing.T) { //nolint:gocognit,cyclop // Test function with many test cases
 	// Helper to create test input data (size prefix + payload)
 	createInput := func(payload []byte) []byte {
+		// #nosec G115 -- Conversion is safe in this context
 		size := uint32(len(payload))
 		input := make([]byte, 4+size)
 		binary.BigEndian.PutUint32(input[0:4], size)
@@ -46,8 +56,8 @@ func TestParseRequest(t *testing.T) {
 			}),
 			expectedReq: &Request{
 				Size:           12,
-				ApiKey:         18,
-				ApiVersion:     4,
+				APIKey:         18,
+				APIVersion:     4,
 				CorrelationID:  1870644833,
 				RemainingBytes: []byte{0xDE, 0xAD, 0xBE, 0xEF},
 			},
@@ -62,8 +72,8 @@ func TestParseRequest(t *testing.T) {
 			}),
 			expectedReq: &Request{
 				Size:           8,
-				ApiKey:         18,
-				ApiVersion:     4,
+				APIKey:         18,
+				APIVersion:     4,
 				CorrelationID:  1870644833,
 				RemainingBytes: []byte{},
 			},
@@ -92,7 +102,7 @@ func TestParseRequest(t *testing.T) {
 			}), // Payload size is 4, which is < 8
 			expectedReq:  nil,
 			expectedErr:  nil, // Remove placeholder, rely on expectErrStr
-			expectErrStr: "message size 4 is too small for header",
+			expectErrStr: "message size too small for header: 4",
 		},
 		{
 			name:        "Error Empty Input",
@@ -107,7 +117,7 @@ func TestParseRequest(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			reader := bytes.NewReader(tc.inputData)
-			req, err := ParseRequest(reader)
+			req, err := protocol.ParseRequest(reader)
 
 			// Check for specific error types
 			if tc.expectedErr != nil {
@@ -159,8 +169,8 @@ func TestWriteResponse(t *testing.T) {
 			response: &Response{
 				CorrelationID: 12345,
 				ErrorCode:     0,
-				ApiKeys: []ApiKeyVersion{
-					{ApiKey: 18, MinVersion: 4, MaxVersion: 4},
+				APIKeys: []APIKeyVersion{
+					{APIKey: 18, MinVersion: 4, MaxVersion: 4},
 				},
 				ThrottleTimeMs: 0,
 			},
@@ -174,7 +184,7 @@ func TestWriteResponse(t *testing.T) {
 				0x00, 0x12, // ApiKey = 18
 				0x00, 0x04, // MinVersion = 4
 				0x00, 0x04, // MaxVersion = 4
-				0x00,       // Tagged Fields (ApiKey Entry)
+				0x00,                   // Tagged Fields (ApiKey Entry)
 				0x00, 0x00, 0x00, 0x00, // ThrottleTimeMs = 0
 				0x00, // Tagged Fields (Overall Response)
 			},
@@ -186,10 +196,10 @@ func TestWriteResponse(t *testing.T) {
 			response: &Response{
 				CorrelationID: 54321,
 				ErrorCode:     0,
-				ApiKeys: []ApiKeyVersion{
-					{ApiKey: 0, MinVersion: 1, MaxVersion: 9},  // Produce
-					{ApiKey: 1, MinVersion: 1, MaxVersion: 13}, // Fetch
-					{ApiKey: 18, MinVersion: 0, MaxVersion: 4}, // ApiVersions
+				APIKeys: []APIKeyVersion{
+					{APIKey: 0, MinVersion: 1, MaxVersion: 9},  // Produce
+					{APIKey: 1, MinVersion: 1, MaxVersion: 13}, // Fetch
+					{APIKey: 18, MinVersion: 0, MaxVersion: 4}, // ApiVersions
 				},
 				ThrottleTimeMs: 100, // Example throttle time
 			},
@@ -199,7 +209,7 @@ func TestWriteResponse(t *testing.T) {
 				0x00, 0x00, 0x00, 0x21, // Size = 33
 				0x00, 0x00, 0xD4, 0x31, // CorrelationID = 54321
 				0x00, 0x00, // ErrorCode = 0
-				0x04,       // ApiKeys Array Length = 3+1 = 4 (UVarint)
+				0x04,                                     // ApiKeys Array Length = 3+1 = 4 (UVarint)
 				0x00, 0x00, 0x00, 0x01, 0x00, 0x09, 0x00, // Produce v1-9 + TaggedFields
 				0x00, 0x01, 0x00, 0x01, 0x00, 0x0D, 0x00, // Fetch v1-13 + TaggedFields
 				0x00, 0x12, 0x00, 0x00, 0x00, 0x04, 0x00, // ApiVersions v0-4 + TaggedFields
@@ -213,8 +223,8 @@ func TestWriteResponse(t *testing.T) {
 			name: "Error Response - Unsupported Version",
 			response: &Response{
 				CorrelationID:  9876,
-				ErrorCode:      ERROR_UNSUPPORTED_VERSION, // Use constant
-				ApiKeys:        []ApiKeyVersion{},         // Must be empty
+				ErrorCode:      protocol.ErrorUnsupportedVersion, // Use constant
+				APIKeys:        []APIKeyVersion{},                // Must be empty
 				ThrottleTimeMs: 0,
 			},
 			expectedOutput: []byte{
@@ -223,7 +233,7 @@ func TestWriteResponse(t *testing.T) {
 				0x00, 0x00, 0x00, 0x0c, // Size = 12
 				0x00, 0x00, 0x26, 0x94, // CorrelationID = 9876
 				0x00, 0x23, // ErrorCode = 35
-				0x01,       // ApiKeys Array Length = 0+1 = 1 (UVarint)
+				0x01,                   // ApiKeys Array Length = 0+1 = 1 (UVarint)
 				0x00, 0x00, 0x00, 0x00, // ThrottleTimeMs = 0
 				0x00, // Tagged Fields (Overall Response)
 			},
@@ -235,18 +245,18 @@ func TestWriteResponse(t *testing.T) {
 			response: &Response{ // Content doesn't matter much here
 				CorrelationID:  111,
 				ErrorCode:      0,
-				ApiKeys:        []ApiKeyVersion{{ApiKey: 18, MinVersion: 4, MaxVersion: 4}},
+				APIKeys:        []APIKeyVersion{{APIKey: 18, MinVersion: 4, MaxVersion: 4}},
 				ThrottleTimeMs: 0,
 			},
-			expectedOutput: []byte{}, // No output expected
-			writer:         &errorWriter{err: errors.New("failed to write")},
-			expectedErr:    errors.New("writing response: failed to write"), // Expect wrapped error
+			expectedOutput: []byte{},                                         // No output expected
+			writer:         &errorWriter{err: errors.New("failed to write")}, //nolint:err113
+			expectedErr:    errors.New("writing response: failed to write"),  //nolint:err113 // Expect wrapped error
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := WriteResponse(tc.writer, tc.response)
+			err := protocol.WriteResponse(tc.writer, tc.response)
 
 			// Check error
 			if tc.expectedErr != nil {
