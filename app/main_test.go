@@ -222,18 +222,19 @@ func TestHandleConnection(t *testing.T) {
 				0x12, 0x34, 0x56, 0x78, // CorrelationID = 305419896
 			}),
 			expectedOutput: []byte{
-				// Size = 21 (Header 4 + Body 17)
+				// Size = 19 (Header 4 + Body 15)
 				// Header = CorrelationID (4)
-				// Body = ErrorCode(2) + ArrayLen(4) + ApiKeyEntry(6) + ThrottleTime(4) + TaggedFields(1) = 17
-				0x00, 0x00, 0x00, 0x15, // Size = 21
+				// Body = ErrorCode(2) + ArrayLenVarint(1) + ApiKeyEntry(7) + ThrottleTime(4) + TaggedFields(1) = 15
+				0x00, 0x00, 0x00, 0x13, // Size = 19
 				0x12, 0x34, 0x56, 0x78, // CorrelationID = 305419896
 				0x00, 0x00, // ErrorCode = 0 (Success)
-				0x00, 0x00, 0x00, 0x01, // ApiKeys Array Length = 1
+				0x02,       // ApiKeys Array Length = 1+1 = 2 (UVarint)
 				0x00, 0x12, // ApiKey = 18 (ApiVersions)
-				0x00, 0x00, // MinVersion = 0 (Updated in main.go)
-				0x00, 0x04, // MaxVersion = 4 (Updated in main.go)
+				0x00, 0x00, // MinVersion = 0
+				0x00, 0x04, // MaxVersion = 4
+				0x00,       // Tagged Fields (ApiKey Entry)
 				0x00, 0x00, 0x00, 0x00, // ThrottleTimeMs = 0
-				0x00, // Tagged Fields (empty)
+				0x00, // Tagged Fields (Overall Response)
 			},
 			writer:         &bytes.Buffer{}, // Use a standard buffer for output capture
 			expectWriteErr: false,
@@ -276,15 +277,15 @@ func TestHandleConnection(t *testing.T) {
 				0x87, 0x65, 0x43, 0x21, // CorrelationID = 2271560481
 			}),
 			expectedOutput: []byte{
-				// Size = 15 (Header 4 + Body 11)
+				// Size = 12 (Header 4 + Body 8)
 				// Header = CorrelationID (4)
-				// Body = ErrorCode(2) + ArrayLen(4) + ThrottleTime(4) + TaggedFields(1) = 11
-				0x00, 0x00, 0x00, 0x0f, // Size = 15
+				// Body = ErrorCode(2) + ArrayLenVarint(1) + ThrottleTime(4) + TaggedFields(1) = 8
+				0x00, 0x00, 0x00, 0x0c, // Size = 12
 				0x87, 0x65, 0x43, 0x21, // CorrelationID = 2271560481
 				0x00, 0x23, // ErrorCode = 35 (UNSUPPORTED_VERSION)
-				0x00, 0x00, 0x00, 0x00, // ApiKeys Array Length = 0
+				0x01,       // ApiKeys Array Length = 0+1 = 1 (UVarint)
 				0x00, 0x00, 0x00, 0x00, // ThrottleTimeMs = 0
-				0x00, // Tagged Fields (empty)
+				0x00, // Tagged Fields (Overall Response)
 			},
 			writer:         &bytes.Buffer{},
 			expectWriteErr: false,
@@ -345,16 +346,18 @@ func TestWriteResponse(t *testing.T) {
 				ThrottleTimeMs: 0,
 			},
 			expectedOutput: []byte{
-				// Size = 21 (Header 4 + Body 17)
-				0x00, 0x00, 0x00, 0x15, // Size = 21
+				// Size = 19 (Header 4 + Body 15)
+				// Body = Err(2) + LenVarint(1) + Key1(7) + Throttle(4) + TaggedFields(1) = 15
+				0x00, 0x00, 0x00, 0x13, // Size = 19
 				0x00, 0x00, 0x30, 0x39, // CorrelationID = 12345
 				0x00, 0x00, // ErrorCode = 0
-				0x00, 0x00, 0x00, 0x01, // ApiKeys Array Length = 1
+				0x02,       // ApiKeys Array Length = 1+1 = 2 (UVarint)
 				0x00, 0x12, // ApiKey = 18
 				0x00, 0x04, // MinVersion = 4
 				0x00, 0x04, // MaxVersion = 4
+				0x00,       // Tagged Fields (ApiKey Entry)
 				0x00, 0x00, 0x00, 0x00, // ThrottleTimeMs = 0
-				0x00, // Tagged Fields (empty)
+				0x00, // Tagged Fields (Overall Response)
 			},
 			writer:      &bytes.Buffer{},
 			expectedErr: nil,
@@ -373,16 +376,16 @@ func TestWriteResponse(t *testing.T) {
 			},
 			expectedOutput: []byte{
 				// Size = 33 (Header 4 + Body 29)
-				// Body = Err(2) + Len(4) + Key1(6) + Key2(6) + Key3(6) + Throttle(4) + TaggedFields(1) = 29
+				// Body = Err(2) + LenVarint(1) + Key1(7) + Key2(7) + Key3(7) + Throttle(4) + TaggedFields(1) = 29
 				0x00, 0x00, 0x00, 0x21, // Size = 33
 				0x00, 0x00, 0xD4, 0x31, // CorrelationID = 54321
 				0x00, 0x00, // ErrorCode = 0
-				0x00, 0x00, 0x00, 0x03, // ApiKeys Array Length = 3
-				0x00, 0x00, 0x00, 0x01, 0x00, 0x09, // Produce v1-9
-				0x00, 0x01, 0x00, 0x01, 0x00, 0x0D, // Fetch v1-13
-				0x00, 0x12, 0x00, 0x00, 0x00, 0x04, // ApiVersions v0-4
+				0x04,       // ApiKeys Array Length = 3+1 = 4 (UVarint)
+				0x00, 0x00, 0x00, 0x01, 0x00, 0x09, 0x00, // Produce v1-9 + TaggedFields
+				0x00, 0x01, 0x00, 0x01, 0x00, 0x0D, 0x00, // Fetch v1-13 + TaggedFields
+				0x00, 0x12, 0x00, 0x00, 0x00, 0x04, 0x00, // ApiVersions v0-4 + TaggedFields
 				0x00, 0x00, 0x00, 0x64, // ThrottleTimeMs = 100
-				0x00, // Tagged Fields (empty)
+				0x00, // Tagged Fields (Overall Response)
 			},
 			writer:      &bytes.Buffer{},
 			expectedErr: nil,
@@ -396,14 +399,14 @@ func TestWriteResponse(t *testing.T) {
 				ThrottleTimeMs: 0,
 			},
 			expectedOutput: []byte{
-				// Size = 15 (Header 4 + Body 11)
-				// Body = Err(2) + Len(4) + Throttle(4) + TaggedFields(1) = 11
-				0x00, 0x00, 0x00, 0x0f, // Size = 15
+				// Size = 12 (Header 4 + Body 8)
+				// Body = Err(2) + LenVarint(1) + Throttle(4) + TaggedFields(1) = 8
+				0x00, 0x00, 0x00, 0x0c, // Size = 12
 				0x00, 0x00, 0x26, 0x94, // CorrelationID = 9876
 				0x00, 0x23, // ErrorCode = 35
-				0x00, 0x00, 0x00, 0x00, // ApiKeys Array Length = 0
+				0x01,       // ApiKeys Array Length = 0+1 = 1 (UVarint)
 				0x00, 0x00, 0x00, 0x00, // ThrottleTimeMs = 0
-				0x00, // Tagged Fields (empty)
+				0x00, // Tagged Fields (Overall Response)
 			},
 			writer:      &bytes.Buffer{},
 			expectedErr: nil,
