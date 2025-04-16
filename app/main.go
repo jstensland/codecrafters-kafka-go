@@ -32,10 +32,10 @@ const (
 	API_KEY_FIELD_LENGTH  = 2
 	VERSION_FIELD_LENGTH  = 2
 	THROTTLE_TIME_LENGTH  = 4
-	TAGGED_FIELDS_LENGTH  = 1 // UVarint 0 for empty tagged fields
+	TAGGED_FIELDS_LENGTH  = 1 // UVarint 0 for empty tagged fields (at the end of the struct/array)
 
-	// ApiKeyVersion is 6 bytes: ApiKey(2) + MinVersion(2) + MaxVersion(2)
-	API_KEY_ENTRY_LENGTH = API_KEY_FIELD_LENGTH + VERSION_FIELD_LENGTH + VERSION_FIELD_LENGTH
+	// ApiKeyVersion is 7 bytes: ApiKey(2) + MinVersion(2) + MaxVersion(2) + TaggedFields(1)
+	API_KEY_ENTRY_LENGTH = API_KEY_FIELD_LENGTH + VERSION_FIELD_LENGTH + VERSION_FIELD_LENGTH + TAGGED_FIELDS_LENGTH
 
 	// Error codes
 	ERROR_NONE                = 0
@@ -70,6 +70,9 @@ func (akv *ApiKeyVersion) Serialize() []byte {
 
 	// Write MaxVersion (2 bytes)
 	binary.BigEndian.PutUint16(bytes[4:6], uint16(akv.MaxVersion))
+
+	// Write Tagged Fields (1 byte, UVarint 0)
+	bytes[6] = 0 // The UVarint encoding for 0 is a single byte 0
 
 	return bytes
 }
