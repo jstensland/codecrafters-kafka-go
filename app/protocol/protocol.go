@@ -18,6 +18,11 @@ var (
 	ErrSizeMismatch            = errors.New("calculated response size does not match actual written size")
 )
 
+// Serializable defines an interface for types that can be serialized into a byte slice.
+type Serializable interface {
+	Serialize() []byte
+}
+
 // writeUvarint encodes a uint64 as an unsigned varint into the provided byte slice
 // and returns the number of bytes written.
 // It panics if the buffer is too small.
@@ -148,6 +153,27 @@ func ParseRequest(reader io.Reader) (*Request, error) {
 	return req, nil
 }
 
+// writeCompactArray encodes a slice of Serializable items into the Kafka COMPACT_ARRAY format
+// into the provided buffer. It returns the number of bytes written.
+// Assumes the buffer `buf` is large enough.
+func writeCompactArray(buf []byte, items []Serializable) int {
+	offset := 0
+
+	// Write Array Length (N+1) as Uvarint
+	// #nosec G115 -- Conversion is safe in this context
+	nBytes := writeUvarint(buf[offset:], uint64(len(items)+1))
+	offset += nBytes
+
+	// Write Array Elements
+	for _, item := range items {
+		serialized := item.Serialize()
+		itemLen := len(serialized)
+		copy(buf[offset:offset+itemLen], serialized)
+		offset += itemLen
+	}
+	return offset
+}
+
 // WriteResponse serializes and writes the full ApiVersions response to the given writer
 // Note: This currently only supports ApiVersions response format (v3+)
 func WriteResponse(writer io.Writer, resp *Response) error {
@@ -184,18 +210,15 @@ func WriteResponse(writer io.Writer, resp *Response) error {
 	binary.BigEndian.PutUint16(responseBytes[offset:offset+ErrorCodeLength], uint16(resp.ErrorCode))
 	offset += ErrorCodeLength
 
-	// 4. Write Body: APIKeys Array (COMPACT_ARRAY format)
-	// 4a. Write Array Length (N+1) as Uvarint
-	// #nosec G115 -- Conversion is safe in this context
-	nBytes := writeUvarint(responseBytes[offset:], uint64(len(resp.APIKeys)+1))
-	offset += nBytes
-
-	// 4b. Write Array Elements
-	for _, apiKey := range resp.APIKeys {
-		serialized := apiKey.Serialize()
-		copy(responseBytes[offset:offset+APIKeyEntryLength], serialized)
-		offset += APIKeyEntryLength
+	// 4. Write Body: APIKeys Array (COMPACT_ARRAY format) using writeCompactArray
+	// Convert []APIKeyVersion to []Serializable (needs pointers for Serialize method)
+	serializableAPIKeys := make([]Serializable, len(resp.APIKeys))
+	for i := range resp.APIKeys {
+		// Create a pointer to the element because Serialize has a pointer receiver
+		serializableAPIKeys[i] = &resp.APIKeys[i]
 	}
+	nBytes := writeCompactArray(responseBytes[offset:], serializableAPIKeys)
+	offset += nBytes
 
 	// 5. Write Body: ThrottleTimeMs
 	// #nosec G115 -- Conversion is safe in this context
