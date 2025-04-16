@@ -8,6 +8,20 @@ import (
 	"os"
 )
 
+// writeUvarint encodes a uint64 as an unsigned varint into the provided byte slice
+// and returns the number of bytes written.
+// It panics if the buffer is too small.
+func writeUvarint(buf []byte, x uint64) int {
+	i := 0
+	for x >= 0x80 {
+		buf[i] = byte(x) | 0x80
+		x >>= 7
+		i++
+	}
+	buf[i] = byte(x)
+	return i + 1
+}
+
 // Kafka protocol constants
 const (
 	// Field sizes in bytes
@@ -22,9 +36,6 @@ const (
 
 	// ApiKeyVersion is 6 bytes: ApiKey(2) + MinVersion(2) + MaxVersion(2)
 	API_KEY_ENTRY_LENGTH = API_KEY_FIELD_LENGTH + VERSION_FIELD_LENGTH + VERSION_FIELD_LENGTH
-
-	// Compact array overhead (length field)
-	COMPACT_ARRAY_LENGTH_FIELD = 4
 
 	// Error codes
 	ERROR_NONE                = 0
@@ -114,11 +125,16 @@ func ParseRequest(reader io.Reader) (*Request, error) {
 
 // WriteResponse serializes and writes the full ApiVersions response to the given writer
 func WriteResponse(writer io.Writer, resp *Response) error {
-	// Calculate sizes for API keys
-	apiKeySizeBytes := len(resp.ApiKeys) * API_KEY_ENTRY_LENGTH
+	// Calculate sizes for API keys payload
+	apiKeyPayloadBytes := len(resp.ApiKeys) * API_KEY_ENTRY_LENGTH
 
-	// Calculate response sizes (including the single byte for empty tagged fields)
-	responseBodySize := ERROR_CODE_LENGTH + ARRAY_LENGTH_FIELD + apiKeySizeBytes + THROTTLE_TIME_LENGTH + TAGGED_FIELDS_LENGTH
+	// Calculate size needed for the Uvarint length prefix (N+1)
+	// We need a temporary buffer to determine the varint size
+	varintBuf := make([]byte, binary.MaxVarintLen64)
+	arrayLengthVarintSize := writeUvarint(varintBuf, uint64(len(resp.ApiKeys)+1))
+
+	// Calculate response sizes using COMPACT_ARRAY format for ApiKeys
+	responseBodySize := ERROR_CODE_LENGTH + arrayLengthVarintSize + apiKeyPayloadBytes + THROTTLE_TIME_LENGTH + TAGGED_FIELDS_LENGTH
 	responseHeaderSize := CORRELATION_ID_LENGTH
 	totalSize := uint32(responseHeaderSize + responseBodySize) // Size *excluding* the initial size field itself
 
@@ -138,11 +154,12 @@ func WriteResponse(writer io.Writer, resp *Response) error {
 	binary.BigEndian.PutUint16(responseBytes[offset:offset+ERROR_CODE_LENGTH], uint16(resp.ErrorCode))
 	offset += ERROR_CODE_LENGTH
 
-	// 4. Write Body: ApiKeys Array
-	binary.BigEndian.PutUint32(responseBytes[offset:offset+ARRAY_LENGTH_FIELD], uint32(len(resp.ApiKeys)))
-	offset += ARRAY_LENGTH_FIELD
+	// 4. Write Body: ApiKeys Array (COMPACT_ARRAY format)
+	// 4a. Write Array Length (N+1) as Uvarint
+	nBytes := writeUvarint(responseBytes[offset:], uint64(len(resp.ApiKeys)+1))
+	offset += nBytes
 
-	// Use the Serialize method for each ApiKeyVersion
+	// 4b. Write Array Elements
 	for _, apiKey := range resp.ApiKeys {
 		serialized := apiKey.Serialize()
 		copy(responseBytes[offset:offset+API_KEY_ENTRY_LENGTH], serialized)
