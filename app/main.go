@@ -18,6 +18,13 @@ const (
 	connectionReadTimeout = 10 * time.Second // Timeout for reading from a connection
 )
 
+// Connection timeout variables. Global var used to manipulate the timeout for testing
+//
+//nolint:gochecknoglobals
+var (
+	currentConnectionReadTimeout = connectionReadTimeout
+)
+
 func main() {
 	// You can use print statements as follows for debugging, they'll be visible when running tests.
 	log.Println("Logs from your program will appear here!")
@@ -76,6 +83,8 @@ func handleAPIVersionsRequest(req *protocol.Request) *protocol.Response {
 }
 
 // HandleConnection processes multiple requests from a single client connection
+//
+//nolint:cyclop
 func HandleConnection(conn net.Conn) {
 	defer func() {
 		if err := conn.Close(); err != nil {
@@ -87,7 +96,7 @@ func HandleConnection(conn net.Conn) {
 	for {
 		// Set a deadline for reading the next request
 		// If no data is received within the timeout period, the connection will time out.
-		err := conn.SetReadDeadline(time.Now().Add(connectionReadTimeout))
+		err := conn.SetReadDeadline(time.Now().Add(currentConnectionReadTimeout))
 		if err != nil {
 			log.Printf("Error setting read deadline: %v", err)
 			return
@@ -105,6 +114,12 @@ func HandleConnection(conn net.Conn) {
 			// Handle EOF separately, client might just disconnect gracefully
 			if errors.Is(err, io.EOF) {
 				log.Println("Client disconnected gracefully.")
+				return
+			}
+
+			// Handle unexpected EOF (incomplete message) as a client disconnect
+			if errors.Is(err, io.ErrUnexpectedEOF) {
+				log.Println("Client disconnected with incomplete message.")
 				return
 			}
 			// Handle other parsing errors

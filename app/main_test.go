@@ -89,6 +89,21 @@ func (ew *errorWriter) Write(_ []byte) (n int, err error) {
 	return 0, ew.err // Always return the configured error
 }
 
+// delayedReader is a reader that delays before returning data
+type delayedReader struct {
+	reader  io.Reader
+	delay   time.Duration
+	readErr error // Optional error to return after delay
+}
+
+func (dr *delayedReader) Read(p []byte) (n int, err error) {
+	time.Sleep(dr.delay)
+	if dr.readErr != nil {
+		return 0, dr.readErr
+	}
+	return dr.reader.Read(p) //nolint:wrapcheck
+}
+
 // TestHandleConnection remains in main_test as it tests the main package's HandleConnection function.
 func TestHandleConnection(t *testing.T) {
 	// Helper to create test input data (size prefix + payload)
@@ -245,5 +260,171 @@ func TestHandleConnection(t *testing.T) {
 				t.Errorf("Expected connection to be closed, but it wasn't")
 			}
 		})
+	}
+}
+
+// TestHandleConnectionMultipleRequests tests that HandleConnection can process multiple
+// requests on the same connection before closing.
+//
+//nolint:cyclop,funlen // let the AI write a long verbose test
+func TestHandleConnectionMultipleRequests(t *testing.T) {
+	// Create a valid ApiVersions request
+	createAPIVersionsRequest := func(correlationID uint32) []byte {
+		payload := []byte{
+			0x00, 0x12, // ApiKey = 18 (ApiVersions)
+			0x00, 0x04, // ApiVersion = 4
+			0x00, 0x00, 0x00, 0x00, // CorrelationID placeholder
+		}
+		// Set the correlation ID
+		binary.BigEndian.PutUint32(payload[4:8], correlationID)
+
+		// Add size prefix
+		size := uint32(len(payload)) //nolint:gosec // in this test, we know the payload size is small
+		request := make([]byte, 4+size)
+		binary.BigEndian.PutUint32(request[0:4], size)
+		copy(request[4:], payload)
+		return request
+	}
+
+	// Create multiple requests with different correlation IDs
+	request1 := createAPIVersionsRequest(0x11111111)
+	request2 := createAPIVersionsRequest(0x22222222)
+	request3 := createAPIVersionsRequest(0x33333333)
+
+	// Combine all requests into a single input stream
+	combinedRequests := append(append(request1, request2...), request3...)
+
+	// Create a reader that will return the combined requests and then EOF
+	inputReader := bytes.NewReader(combinedRequests)
+	outputWriter := &bytes.Buffer{}
+
+	conn := &mockConn{
+		reader: inputReader,
+		writer: outputWriter,
+	}
+
+	// Call the function under test
+	main.HandleConnection(conn)
+
+	// Verify the connection was closed
+	if !conn.closed {
+		t.Errorf("Expected connection to be closed, but it wasn't")
+	}
+
+	// Check that we got 3 responses by looking for the 3 correlation IDs in the output
+	output := outputWriter.Bytes()
+
+	// Debug output
+	t.Logf("Output buffer length: %d bytes", len(output))
+
+	// Each response should have the same correlation ID as its request
+	expectedIDs := []uint32{0x11111111, 0x22222222, 0x33333333}
+	foundIDs := make([]uint32, 0, 3)
+
+	// The response format has the correlation ID at bytes 4-7 of each message
+	// First, we need to parse the output into individual responses
+	var pos int
+
+	for pos < len(output) {
+		// Each response starts with a 4-byte size field
+		if pos+4 > len(output) {
+			t.Logf("Incomplete response at position %d", pos)
+			break
+		}
+
+		size := binary.BigEndian.Uint32(output[pos : pos+4])
+		t.Logf("Found response with size %d at position %d", size, pos)
+
+		if pos+4+int(size) > len(output) {
+			t.Logf("Response size %d exceeds buffer at position %d", size, pos)
+			break
+		}
+
+		// Check correlation ID (at offset 4 in the response)
+		if pos+8 <= len(output) {
+			correlationID := binary.BigEndian.Uint32(output[pos+4 : pos+8])
+			t.Logf("Found correlation ID: 0x%08x", correlationID)
+			foundIDs = append(foundIDs, correlationID)
+		}
+
+		// Move to the next response
+		pos += 4 + int(size)
+	}
+
+	// Check if we found all expected correlation IDs
+	if len(foundIDs) != len(expectedIDs) {
+		t.Errorf("Expected %d responses, found %d", len(expectedIDs), len(foundIDs))
+	}
+
+	// Check if all expected IDs were found
+	missingIDs := make([]uint32, 0)
+	for _, expectedID := range expectedIDs {
+		found := false
+		for _, foundID := range foundIDs {
+			if foundID == expectedID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			missingIDs = append(missingIDs, expectedID)
+		}
+	}
+
+	if len(missingIDs) > 0 {
+		t.Errorf("Missing responses for correlation IDs: %v", missingIDs)
+	}
+}
+
+// TestHandleConnectionTimeout tests that HandleConnection properly times out
+// when no data is received within the timeout period.
+func TestHandleConnectionTimeout(t *testing.T) {
+	// Create a reader that will delay longer than the timeout
+	// We'll use a small timeout for testing
+	originalTimeout := main.GetConnectionReadTimeout()
+
+	// Set a very small timeout for the test
+	testTimeout := 50 * time.Millisecond
+	main.SetConnectionReadTimeout(testTimeout)
+
+	// Restore the original timeout when the test completes
+	defer main.SetConnectionReadTimeout(originalTimeout)
+
+	// Create a reader that delays longer than the timeout
+	delayedReader := &delayedReader{
+		reader: bytes.NewReader([]byte{}), // Empty reader
+		delay:  testTimeout * 2,           // Delay twice as long as the timeout
+	}
+
+	outputWriter := &bytes.Buffer{}
+
+	conn := &mockConn{
+		reader: delayedReader,
+		writer: outputWriter,
+	}
+
+	// Start timing the operation
+	start := time.Now()
+
+	// Call the function under test
+	main.HandleConnection(conn)
+
+	// Check that the operation completed in approximately the timeout duration
+	elapsed := time.Since(start)
+
+	// The connection should be closed
+	if !conn.closed {
+		t.Errorf("Expected connection to be closed after timeout, but it wasn't")
+	}
+
+	// The elapsed time should be close to the timeout
+	// Allow some wiggle room for processing overhead
+	if elapsed < testTimeout {
+		t.Errorf("Operation completed too quickly: %v (expected at least %v)", elapsed, testTimeout)
+	}
+
+	// The buffer should be empty since no response should have been sent
+	if outputWriter.Len() > 0 {
+		t.Errorf("Expected empty output buffer after timeout, got %d bytes", outputWriter.Len())
 	}
 }
