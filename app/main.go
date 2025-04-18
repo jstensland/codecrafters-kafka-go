@@ -90,7 +90,7 @@ func HandleConnection(conn net.Conn) {
 		err := conn.SetReadDeadline(time.Now().Add(connectionReadTimeout))
 		if err != nil {
 			log.Printf("Error setting read deadline: %v", err)
-			return // Close connection on error setting deadline
+			return
 		}
 
 		// Parse the incoming request using the protocol package
@@ -100,22 +100,25 @@ func HandleConnection(conn net.Conn) {
 			var netErr net.Error
 			if errors.As(err, &netErr) && netErr.Timeout() {
 				log.Println("Connection timed out due to inactivity.")
-				return // Close connection on timeout
+				return
 			}
 			// Handle EOF separately, client might just disconnect gracefully
 			if errors.Is(err, io.EOF) {
 				log.Println("Client disconnected gracefully.")
-				return // Close connection on EOF
+				return
 			}
 			// Handle other parsing errors
 			log.Printf("Error parsing request: %v", err)
-			return // Close connection on other errors
+			return
 		}
 
-		// Reset the deadline after a successful read if you want the timeout
-		// to only apply to periods of inactivity, not the entire connection duration.
-		// Uncomment the line below if needed.
-		// conn.SetReadDeadline(time.Time{}) // Zero value means no deadline
+		// Reset the deadline after a successful read to only apply the timeout
+		// to periods of inactivity, not the entire connection duration.
+		err = conn.SetReadDeadline(time.Time{}) // Zero value means no deadline
+		if err != nil {
+			log.Printf("Error resetting read deadline: %v", err)
+			return
+		}
 
 		// For now, we only handle ApiVersions requests (ApiKey 18).
 		// A real broker would use req.ApiKey to dispatch to different handlers.
