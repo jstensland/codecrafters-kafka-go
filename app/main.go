@@ -18,9 +18,7 @@ const (
 	connectionReadTimeout = 10 * time.Second // Timeout for reading from a connection
 )
 
-// Connection timeout variables. Global var used to manipulate the timeout for testing
-//
-//nolint:gochecknoglobals
+//nolint:gochecknoglobals // Connection timeout variables. Global var used to manipulate the timeout for testing
 var (
 	currentConnectionReadTimeout = connectionReadTimeout
 )
@@ -83,15 +81,8 @@ func handleAPIVersionsRequest(req *protocol.Request) *protocol.Response {
 }
 
 // HandleConnection processes multiple requests from a single client connection
-//
-//nolint:cyclop
 func HandleConnection(conn net.Conn) {
-	defer func() {
-		if err := conn.Close(); err != nil {
-			log.Printf("Error closing connection: %v", err)
-		}
-		log.Println("Connection closed.")
-	}() // Ensure connection is closed when handler exits
+	defer closeConn(conn) // Ensure connection is closed when handler exits
 
 	for {
 		// Set a deadline for reading the next request
@@ -117,11 +108,6 @@ func HandleConnection(conn net.Conn) {
 				return
 			}
 
-			// Handle unexpected EOF (incomplete message) as a client disconnect
-			if errors.Is(err, io.ErrUnexpectedEOF) {
-				log.Println("Client disconnected with incomplete message.")
-				return
-			}
 			// Handle other parsing errors
 			log.Printf("Error parsing request: %v", err)
 			return
@@ -159,4 +145,11 @@ func HandleConnection(conn net.Conn) {
 			return // Close connection if writing fails
 		}
 	}
+}
+
+func closeConn(conn net.Conn) {
+	if err := conn.Close(); err != nil {
+		log.Printf("Error closing connection: %v", err)
+	}
+	log.Println("Connection closed.")
 }
