@@ -1,4 +1,4 @@
-package main_test // Change package to main_test to avoid conflicts
+package handlers_test
 
 import (
 	"bytes"
@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	main "github.com/codecrafters-io/kafka-starter-go/app"
+	"github.com/codecrafters-io/kafka-starter-go/app/handlers"
 )
 
 var ErrClosingMockConn = errors.New("errors closing mock connection")
@@ -238,8 +238,8 @@ func TestHandleConnection(t *testing.T) {
 				writer: outputWriter,
 			}
 
-			// Call the function under test (from the main package)
-			main.HandleConnection(conn) // Use main.HandleConnection
+			// Call the function under test (from the handlers package)
+			handlers.HandleConnection(conn, handlers.ConnectionReadTimeout)
 
 			// Assertions
 			if buf, ok := outputWriter.(*bytes.Buffer); ok && !tc.expectWriteErr {
@@ -304,7 +304,7 @@ func TestHandleConnectionMultipleRequests(t *testing.T) {
 	}
 
 	// Call the function under test
-	main.HandleConnection(conn)
+	handlers.HandleConnection(conn, handlers.ConnectionReadTimeout)
 
 	// Verify the connection was closed
 	if !conn.closed {
@@ -379,16 +379,8 @@ func TestHandleConnectionMultipleRequests(t *testing.T) {
 // TestHandleConnectionTimeout tests that HandleConnection properly times out
 // when no data is received within the timeout period.
 func TestHandleConnectionTimeout(t *testing.T) {
-	// Create a reader that will delay longer than the timeout
-	// We'll use a small timeout for testing
-	originalTimeout := main.GetConnectionReadTimeout()
-
 	// Set a very small timeout for the test
-	testTimeout := 50 * time.Millisecond
-	main.SetConnectionReadTimeout(testTimeout)
-
-	// Restore the original timeout when the test completes
-	defer main.SetConnectionReadTimeout(originalTimeout)
+	testTimeout := 10 * time.Millisecond
 
 	// Create a reader that delays longer than the timeout
 	delayedReader := &delayedReader{
@@ -406,8 +398,8 @@ func TestHandleConnectionTimeout(t *testing.T) {
 	// Start timing the operation
 	start := time.Now()
 
-	// Call the function under test
-	main.HandleConnection(conn)
+	// Call the function under test, passing the specific test timeout
+	handlers.HandleConnection(conn, testTimeout)
 
 	// Check that the operation completed in approximately the timeout duration
 	elapsed := time.Since(start)

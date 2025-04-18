@@ -15,7 +15,15 @@ import (
 
 // Default target to run when none is specified
 // If not set, running mage will list available targets
-// var Default = Build
+var Default = All
+
+// All will Do all the things one should do before pushing
+func All() error {
+	mg.Deps(Test) // fix this first
+	mg.Deps(Lint) // tidy up
+	// TODO: make sure you can build binary with flags you want
+	return nil
+}
 
 // Lint files
 func Lint() error {
