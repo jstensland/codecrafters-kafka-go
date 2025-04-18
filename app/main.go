@@ -2,18 +2,20 @@
 package main
 
 import (
-	"errors" // Add errors import for errors.Is
+	"errors"
 	"io"
 	"log"
 	"net"
 	"os"
+	"time"
 
-	"github.com/codecrafters-io/kafka-starter-go/app/protocol" // Import the new protocol package
+	"github.com/codecrafters-io/kafka-starter-go/app/protocol"
 )
 
-// API version constants
+// Constants
 const (
-	apiVersionsV4 = 4 // Supported API version for ApiVersions
+	apiVersionsV4         = 4                // Supported API version for ApiVersions
+	connectionReadTimeout = 10 * time.Second // Timeout for reading from a connection
 )
 
 func main() {
@@ -73,46 +75,70 @@ func handleAPIVersionsRequest(req *protocol.Request) *protocol.Response {
 	return resp
 }
 
-// HandleConnection processes a single client connection
+// HandleConnection processes multiple requests from a single client connection
 func HandleConnection(conn net.Conn) {
 	defer func() {
 		if err := conn.Close(); err != nil {
 			log.Printf("Error closing connection: %v", err)
 		}
+		log.Println("Connection closed.")
 	}() // Ensure connection is closed when handler exits
 
-	// Parse the incoming request using the protocol package
-	req, err := protocol.ParseRequest(conn)
-	if err != nil {
-		// Handle EOF separately, client might just disconnect
-		if errors.Is(err, io.EOF) { // Use errors.Is for potentially wrapped EOF
-			log.Println("Client disconnected gracefully.")
-		} else {
+	for {
+		// Set a deadline for reading the next request
+		// If no data is received within the timeout period, the connection will time out.
+		err := conn.SetReadDeadline(time.Now().Add(connectionReadTimeout))
+		if err != nil {
+			log.Printf("Error setting read deadline: %v", err)
+			return // Close connection on error setting deadline
+		}
+
+		// Parse the incoming request using the protocol package
+		req, err := protocol.ParseRequest(conn)
+		if err != nil {
+			// Check for timeout error
+			var netErr net.Error
+			if errors.As(err, &netErr) && netErr.Timeout() {
+				log.Println("Connection timed out due to inactivity.")
+				return // Close connection on timeout
+			}
+			// Handle EOF separately, client might just disconnect gracefully
+			if errors.Is(err, io.EOF) {
+				log.Println("Client disconnected gracefully.")
+				return // Close connection on EOF
+			}
+			// Handle other parsing errors
 			log.Printf("Error parsing request: %v", err)
+			return // Close connection on other errors
 		}
-		return // Stop processing on error
-	}
 
-	// For now, we only handle ApiVersions requests (ApiKey 18).
-	// A real broker would use req.ApiKey to dispatch to different handlers.
-	var resp *protocol.Response
-	if req.APIKey == protocol.APIKeyAPIVersions {
-		resp = handleAPIVersionsRequest(req)
-	} else {
-		// Handle other API keys or return an error response if unsupported
-		// For now, let's just create a basic error response for unknown keys
-		resp = &protocol.Response{
-			CorrelationID:  req.CorrelationID,
-			ErrorCode:      protocol.ErrorUnsupportedVersion, // Or a more specific error
-			APIKeys:        []protocol.APIKeyVersion{},
-			ThrottleTimeMs: 0,
+		// Reset the deadline after a successful read if you want the timeout
+		// to only apply to periods of inactivity, not the entire connection duration.
+		// Uncomment the line below if needed.
+		// conn.SetReadDeadline(time.Time{}) // Zero value means no deadline
+
+		// For now, we only handle ApiVersions requests (ApiKey 18).
+		// A real broker would use req.ApiKey to dispatch to different handlers.
+		var resp *protocol.Response
+		if req.APIKey == protocol.APIKeyAPIVersions {
+			resp = handleAPIVersionsRequest(req)
+		} else {
+			// Handle other API keys or return an error response if unsupported
+			// For now, let's just create a basic error response for unknown keys
+			resp = &protocol.Response{
+				CorrelationID:  req.CorrelationID,
+				ErrorCode:      protocol.ErrorUnsupportedVersion, // Or a more specific error
+				APIKeys:        []protocol.APIKeyVersion{},
+				ThrottleTimeMs: 0,
+			}
+			log.Printf("Received unsupported ApiKey: %d", req.APIKey)
 		}
-		log.Printf("Received unsupported ApiKey: %d", req.APIKey)
-	}
 
-	// Write the response using the protocol package function
-	err = protocol.WriteResponse(conn, resp)
-	if err != nil {
-		log.Printf("Error writing response: %v", err)
+		// Write the response using the protocol package function
+		err = protocol.WriteResponse(conn, resp)
+		if err != nil {
+			log.Printf("Error writing response: %v", err)
+			return // Close connection if writing fails
+		}
 	}
 }
