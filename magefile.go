@@ -31,9 +31,14 @@ func Lint() error {
 	return sh.RunV("golangci-lint", "run", "./...")
 }
 
-// Lint one file. Intended for aider.
-func LintFile(filePath string) error {
+// Format and then lint one file. Intended for aider.
+func FormatLintFile(filePath string) error {
 	dirPath := filepath.Dir(filePath)
+	fmt.Println("formating file first:", filePath)
+	err := sh.RunV("gofumpt", "-w", "-extra", filePath)
+	if err != nil {
+		return fmt.Errorf("Error formatting code before linting: %w", err)
+	}
 	fmt.Println("Linting package in:", dirPath)
 	return sh.RunV("golangci-lint", "run", dirPath)
 }
@@ -58,6 +63,7 @@ func TestVerbose() error {
 	return sh.RunV("go", "test", "-race", "-covermode=atomic", "-coverprofile=build/coverage.out", "./...", "-v")
 }
 
+// compute and display coverage
 func Coverage() error {
 	mg.Deps(Test)
 	err := sh.RunV("go", "tool", "cover", "-html=build/coverage.out", "-o", "build/coverage.html")
@@ -68,12 +74,12 @@ func Coverage() error {
 	return cmd.Run()
 }
 
-// Build and run
+// go run the app
 func Run() error {
 	return sh.RunV("go", "run", "app/main.go")
 }
 
-// Clean up after yourself
+// Clean remove build artifacts
 func Clean() {
 	fmt.Println("Cleaning...")
 	os.RemoveAll("build")
