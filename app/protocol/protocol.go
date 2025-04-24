@@ -57,7 +57,8 @@ const (
 	ErrorUnsupportedVersion = 35
 
 	// API Keys (Exported)
-	APIKeyAPIVersions = 18
+	APIKeyAPIVersions             = 18
+	APIKeyDescribeTopicPartitions = 75
 )
 
 // Request represents the structure of an incoming Kafka request header

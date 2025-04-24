@@ -34,11 +34,12 @@ func handleAPIVersionsRequest(req *protocol.Request) *protocol.Response {
 	} else {
 		resp.ErrorCode = protocol.ErrorNone // Success
 		// Define the APIs supported by this broker
-		// Always include ApiVersions (18) for successful responses
+		// Always include ApiVersions (18) and DescribeTopicPartitions (75) for successful responses
 		resp.APIKeys = []protocol.APIKeyVersion{
 			// Report support for versions 0 through 4 for ApiVersions
-			{APIKey: protocol.APIKeyAPIVersions, MinVersion: 0, MaxVersion: apiVersionsV4}, // ApiVersions itself
-			// Add other supported APIs here later
+			{APIKey: protocol.APIKeyAPIVersions, MinVersion: 0, MaxVersion: apiVersionsV4},
+			// Report support for version 0 for DescribeTopicPartitions
+			{APIKey: protocol.APIKeyDescribeTopicPartitions, MinVersion: 0, MaxVersion: 0},
 		}
 	}
 
