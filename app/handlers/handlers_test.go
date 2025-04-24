@@ -133,17 +133,25 @@ func TestHandleConnection(t *testing.T) {
 				0x12, 0x34, 0x56, 0x78, // CorrelationID = 305419896
 			}),
 			expectedOutput: []byte{
-				// Size = 19 (Header 4 + Body 15)
+				// Size = 26 (Header 4 + Body 22)
 				// Header = CorrelationID (4)
-				// Body = ErrorCode(2) + ArrayLenVarint(1) + ApiKeyEntry(7) + ThrottleTime(4) + TaggedFields(1) = 15
-				0x00, 0x00, 0x00, 0x13, // Size = 19
+				// Body = ErrorCode(2) + ArrayLenVarint(1) + ApiKeyEntry1(7)
+				//      + ApiKeyEntry2(7) + ThrottleTime(4) + TaggedFields(1) = 22
+				0x00, 0x00, 0x00, 0x1a, // Size = 26
 				0x12, 0x34, 0x56, 0x78, // CorrelationID = 305419896
 				0x00, 0x00, // ErrorCode = 0 (Success)
-				0x02,       // ApiKeys Array Length = 1+1 = 2 (UVarint)
-				0x00, 0x12, // ApiKey = 18 (ApiVersions)
+				0x03, // ApiKeys Array Length = 2+1 = 3 (UVarint)
+				// API Key 18 (ApiVersions)
+				0x00, 0x12, // ApiKey = 18
 				0x00, 0x00, // MinVersion = 0
 				0x00, 0x04, // MaxVersion = 4
-				0x00,                   // Tagged Fields (ApiKey Entry)
+				0x00, // Tagged Fields (ApiKey Entry)
+				// API Key 75 (DescribeTopicPartitions)
+				0x00, 0x4b, // ApiKey = 75
+				0x00, 0x00, // MinVersion = 0
+				0x00, 0x00, // MaxVersion = 0
+				0x00, // Tagged Fields (ApiKey Entry)
+				// End of Array
 				0x00, 0x00, 0x00, 0x00, // ThrottleTimeMs = 0
 				0x00, // Tagged Fields (Overall Response)
 			},
