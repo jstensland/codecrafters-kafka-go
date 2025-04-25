@@ -19,10 +19,18 @@ var Default = All
 
 // All will Do all the things one should do before pushing
 func All() error {
-	mg.Deps(Test) // fix this first
-	mg.Deps(Lint) // tidy up
+	mg.Deps(Format) // fix formatting
+	mg.Deps(Test)   // fix this first
+	mg.Deps(Lint)   // tidy up
 	// TODO: make sure you can build binary with flags you want
 	return nil
+}
+
+// Format it all
+func Format() error {
+	fmt.Println("Formatting...")
+	// TODO: add import handling
+	return sh.RunV("gofumpt", "-w", "-extra", ".")
 }
 
 // Lint files
@@ -86,5 +94,5 @@ func Clean() {
 }
 
 func setup() error {
-	return os.MkdirAll("build", 0755)
+	return os.MkdirAll("build", 0o755)
 }
