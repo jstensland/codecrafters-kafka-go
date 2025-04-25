@@ -151,19 +151,34 @@ func TestServerServe(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			srv, listener := tt.setupServer()
 
-			// Set up a goroutine to close the listener after a short delay
-			// This will cause Serve() to return
+			serveErrChan := make(chan error, 1) // Buffered channel to avoid blocking
+
+			// Run Serve in a goroutine
 			go func() {
-				time.Sleep(10 * time.Millisecond)
-				if err := listener.Close(); err != nil {
-					t.Logf("Error closing listener: %v", err)
-				}
+				serveErrChan <- srv.Serve()
+				close(serveErrChan) // Close channel when Serve returns
 			}()
 
-			err := srv.Serve()
+			// Allow some time for the server to potentially start accepting
+			// or encounter an immediate error before we close the listener.
+			time.Sleep(5 * time.Millisecond)
 
+			// Close the listener from the main test goroutine to signal Serve to stop
+			if err := listener.Close(); err != nil {
+				// Log the error but don't fail the test here,
+				// as the main goal is to check the Serve() error.
+				t.Logf("Error closing listener during test: %v", err)
+			}
+
+			// Wait for Serve to return and get its error
+			err := <-serveErrChan
+
+			// Check if the error matches expectations
 			if (err != nil) != tt.wantErr {
-				t.Errorf("Server.Serve() error = %v, wantErr %v", err, tt.wantErr)
+				// Check specifically for net.ErrClosed which is expected when closing the listener
+				if !(errors.Is(err, net.ErrClosed) && !tt.wantErr) {
+					t.Errorf("Server.Serve() error = %v, wantErr %v", err, tt.wantErr)
+				}
 			}
 		})
 	}
