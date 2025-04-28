@@ -65,7 +65,7 @@ func (s *Server) Serve() error {
 	}
 }
 
-// handleConnection processes multiple requests from a single client connection
+// HandleConnection processes multiple requests from a single client connection
 func (s *Server) HandleConnection(conn net.Conn, readTimeout time.Duration) {
 	defer s.closeConn(conn) // Ensure connection is closed when handler exits
 

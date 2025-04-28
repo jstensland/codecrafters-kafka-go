@@ -26,6 +26,13 @@ func All() error {
 	return nil
 }
 
+// format and test. linting is too much all at once for aider
+func AiderTest() error {
+	mg.Deps(Format) // fix formatting
+	mg.Deps(Test)   // fix this first
+	return nil
+}
+
 // Format it all
 func Format() error {
 	fmt.Println("Formatting...")
