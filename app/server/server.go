@@ -79,7 +79,7 @@ func (s *Server) HandleConnection(conn net.Conn, readTimeout time.Duration) {
 		}
 
 		// Parse the incoming request using the protocol package
-		req, err := protocol.ParseRequest(conn)
+		req, err := handlers.ParseRequest(conn)
 		if err != nil {
 			// Check for timeout error
 			var netErr net.Error
@@ -107,11 +107,11 @@ func (s *Server) HandleConnection(conn net.Conn, readTimeout time.Duration) {
 		}
 
 		// Dispatch based on API Key
-		var response interface{} // Use interface{} to hold different response types
+		var response protocol.APIResponse
 		var writeErr error
 
 		switch req.APIKey {
-		case protocol.APIKeyAPIVersions:
+		case handlers.APIKeyAPIVersions:
 			// Call the exported handler from the handlers package
 			response = handlers.HandleAPIVersionsRequest(req)
 		// TODO: Add case for protocol.APIKeyDescribeTopicPartitions here later
@@ -119,25 +119,16 @@ func (s *Server) HandleConnection(conn net.Conn, readTimeout time.Duration) {
 			// Handle other unknown API keys
 			log.Printf("Received unsupported ApiKey: %d", req.APIKey)
 			// Use the ApiVersions response structure for a generic error
-			response = &protocol.Response{
+			response = &handlers.APIVersionsResponse{
 				CorrelationID:  req.CorrelationID,
 				ErrorCode:      protocol.ErrorUnsupportedVersion,
-				APIKeys:        []protocol.APIKeyVersion{},
+				APIKeys:        []handlers.APIKeyVersion{},
 				ThrottleTimeMs: 0,
 			}
 		}
 
-		// Ensure the response implements the APIResponse interface
-		apiResponse, ok := response.(protocol.APIResponse)
-		if !ok {
-			// This should ideally not happen if all handlers return types implementing APIResponse
-			log.Printf("Error: Response type %T does not implement protocol.APIResponse", response)
-			// Handle this error appropriately, maybe close connection or send a generic error
-			return // Close connection as we cannot serialize the response
-		}
-
 		// Write the appropriate response using the protocol package function
-		writeErr = protocol.WriteResponse(conn, apiResponse) // Pass the APIResponse interface
+		writeErr = protocol.WriteResponse(conn, response) // Pass the APIResponse interface
 		if writeErr != nil {
 			log.Printf("Error writing response: %v", writeErr)
 			return // Close connection if writing fails
