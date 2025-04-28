@@ -1,24 +1,17 @@
-// Package handlers contains the logic for handling client connections and requests.
+// Package handlers contains the logic for handling client connections and requests specific to Kafka API keys.
 package handlers
 
 import (
-	"errors"
-	"io"
-	"log"
-	"net"
-	"time"
-
 	"github.com/codecrafters-io/kafka-starter-go/app/protocol"
 )
 
 // Constants
 const (
-	apiVersionsV4         = 4                // Supported API version for ApiVersions
-	ConnectionReadTimeout = 10 * time.Second // Timeout for reading from a connection
+	apiVersionsV4 = 4 // Supported API version for ApiVersions
 )
 
-// handleAPIVersionsRequest processes an ApiVersions request and returns the appropriate response
-func handleAPIVersionsRequest(req *protocol.Request) *protocol.Response {
+// HandleAPIVersionsRequest processes an ApiVersions request and returns the appropriate response
+func HandleAPIVersionsRequest(req *protocol.Request) *protocol.Response {
 	resp := &protocol.Response{
 		CorrelationID:  req.CorrelationID,
 		ThrottleTimeMs: 0, // No throttling implemented
@@ -44,78 +37,4 @@ func handleAPIVersionsRequest(req *protocol.Request) *protocol.Response {
 	}
 
 	return resp
-}
-
-// HandleConnection processes multiple requests from a single client connection
-func HandleConnection(conn net.Conn, readTimeout time.Duration) {
-	defer closeConn(conn) // Ensure connection is closed when handler exits
-
-	for {
-		// Set a deadline for reading the next request
-		// If no data is received within the timeout period, the connection will time out.
-		err := conn.SetReadDeadline(time.Now().Add(readTimeout))
-		if err != nil {
-			log.Printf("Error setting read deadline: %v", err)
-			return
-		}
-
-		// Parse the incoming request using the protocol package
-		req, err := protocol.ParseRequest(conn)
-		if err != nil {
-			// Check for timeout error
-			var netErr net.Error
-			if errors.As(err, &netErr) && netErr.Timeout() {
-				log.Println("Connection timed out due to inactivity.")
-				return
-			}
-			// Handle EOF separately, client might just disconnect gracefully
-			if errors.Is(err, io.EOF) {
-				log.Println("Client disconnected gracefully.")
-				return
-			}
-
-			// Handle other parsing errors
-			log.Printf("Error parsing request: %v", err)
-			return
-		}
-
-		// Reset the deadline after a successful read to only apply the timeout
-		// to periods of inactivity, not the entire connection duration.
-		err = conn.SetReadDeadline(time.Time{}) // Zero value means no deadline
-		if err != nil {
-			log.Printf("Error resetting read deadline: %v", err)
-			return
-		}
-
-		// For now, we only handle ApiVersions requests (ApiKey 18).
-		// A real broker would use req.ApiKey to dispatch to different handlers.
-		var resp *protocol.Response
-		if req.APIKey == protocol.APIKeyAPIVersions {
-			resp = handleAPIVersionsRequest(req)
-		} else {
-			// Handle other API keys or return an error response if unsupported
-			// For now, let's just create a basic error response for unknown keys
-			resp = &protocol.Response{
-				CorrelationID:  req.CorrelationID,
-				ErrorCode:      protocol.ErrorUnsupportedVersion, // Or a more specific error
-				APIKeys:        []protocol.APIKeyVersion{},
-				ThrottleTimeMs: 0,
-			}
-			log.Printf("Received unsupported ApiKey: %d", req.APIKey)
-		}
-
-		// Write the response using the protocol package function
-		err = protocol.WriteResponse(conn, resp)
-		if err != nil {
-			log.Printf("Error writing response: %v", err)
-			return // Close connection if writing fails
-		}
-	}
-}
-
-func closeConn(conn net.Conn) {
-	if err := conn.Close(); err != nil {
-		log.Printf("Error closing connection: %v", err)
-	}
-	log.Println("Connection closed.")
 }

@@ -4,11 +4,19 @@ package server
 import (
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"os"
+	"time"
 
 	"github.com/codecrafters-io/kafka-starter-go/app/handlers"
+	"github.com/codecrafters-io/kafka-starter-go/app/protocol"
+)
+
+// Constants
+const (
+	ConnectionReadTimeout = 10 * time.Second // Timeout for reading from a connection
 )
 
 // Server represents a Kafka broker server.
@@ -53,8 +61,87 @@ func (s *Server) Serve() error {
 		}
 
 		// Handle connection in a new goroutine to allow concurrent connections
-		go handlers.HandleConnection(conn, handlers.ConnectionReadTimeout)
+		go s.HandleConnection(conn, ConnectionReadTimeout)
 	}
+}
+
+// handleConnection processes multiple requests from a single client connection
+func (s *Server) HandleConnection(conn net.Conn, readTimeout time.Duration) {
+	defer s.closeConn(conn) // Ensure connection is closed when handler exits
+
+	for {
+		// Set a deadline for reading the next request
+		// If no data is received within the timeout period, the connection will time out.
+		err := conn.SetReadDeadline(time.Now().Add(readTimeout))
+		if err != nil {
+			log.Printf("Error setting read deadline: %v", err)
+			return
+		}
+
+		// Parse the incoming request using the protocol package
+		req, err := protocol.ParseRequest(conn)
+		if err != nil {
+			// Check for timeout error
+			var netErr net.Error
+			if errors.As(err, &netErr) && netErr.Timeout() {
+				log.Println("Connection timed out due to inactivity.")
+				return
+			}
+			// Handle EOF separately, client might just disconnect gracefully
+			if errors.Is(err, io.EOF) {
+				log.Println("Client disconnected gracefully.")
+				return
+			}
+
+			// Handle other parsing errors
+			log.Printf("Error parsing request: %v", err)
+			return
+		}
+
+		// Reset the deadline after a successful read to only apply the timeout
+		// to periods of inactivity, not the entire connection duration.
+		err = conn.SetReadDeadline(time.Time{}) // Zero value means no deadline
+		if err != nil {
+			log.Printf("Error resetting read deadline: %v", err)
+			return
+		}
+
+		// Dispatch based on API Key
+		var response interface{} // Use interface{} to hold different response types
+		var writeErr error
+
+		switch req.APIKey {
+		case protocol.APIKeyAPIVersions:
+			// Call the exported handler from the handlers package
+			response = handlers.HandleAPIVersionsRequest(req)
+		// TODO: Add case for protocol.APIKeyDescribeTopicPartitions here later
+		default:
+			// Handle other unknown API keys
+			log.Printf("Received unsupported ApiKey: %d", req.APIKey)
+			// Use the ApiVersions response structure for a generic error
+			response = &protocol.Response{
+				CorrelationID:  req.CorrelationID,
+				ErrorCode:      protocol.ErrorUnsupportedVersion,
+				APIKeys:        []protocol.APIKeyVersion{},
+				ThrottleTimeMs: 0,
+			}
+		}
+
+		// Write the appropriate response using the protocol package function
+		writeErr = protocol.WriteResponse(conn, response.(*protocol.Response)) // Pass the interface{} directly
+		if writeErr != nil {
+			log.Printf("Error writing response: %v", writeErr)
+			return // Close connection if writing fails
+		}
+	}
+}
+
+// closeConn closes the connection and logs any errors.
+func (s *Server) closeConn(conn net.Conn) {
+	if err := conn.Close(); err != nil {
+		log.Printf("Error closing connection: %v", err)
+	}
+	log.Println("Connection closed.")
 }
 
 // Run creates a server with the default address and starts it.
