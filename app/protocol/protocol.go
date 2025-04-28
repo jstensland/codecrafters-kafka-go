@@ -175,13 +175,18 @@ func writeCompactArray(buf []byte, items []Serializable) int {
 	return offset
 }
 
-// WriteResponse serializes and writes the full ApiVersions response to the given writer
-// Note: This currently only supports ApiVersions response format (v3+)
-func WriteResponse(writer io.Writer, resp *Response) error {
+// APIResponse defines the interface for any Kafka response type that can be serialized.
+type APIResponse interface {
+	Serialize() ([]byte, error)
+}
+
+// Serialize converts the ApiVersions Response (v3+) into its byte representation.
+// This method implements the APIResponse interface.
+func (resp *Response) Serialize() ([]byte, error) {
 	// Calculate sizes for API keys payload
 	apiKeyPayloadBytes := len(resp.APIKeys) * APIKeyEntryLength
 
-	// Calculate size needed for the Uvarint length prefix (N+1)
+	// Calculate size needed for the Uvarint length prefix (N+1) for the compact array
 	// We need a temporary buffer to determine the varint size
 	varintBuf := make([]byte, binary.MaxVarintLen64) // Max size for a uvarint
 	// #nosec G115 -- Conversion is safe in this context
@@ -232,14 +237,25 @@ func WriteResponse(writer io.Writer, resp *Response) error {
 
 	// Sanity check: ensure offset matches the calculated total size
 	if offset != len(responseBytes) {
-		return fmt.Errorf("%w: calculated=%d, actual=%d",
+		return nil, fmt.Errorf("%w: calculated=%d, actual=%d",
 			ErrSizeMismatch, len(responseBytes), offset)
 	}
 
-	// Send the complete response
-	_, err := writer.Write(responseBytes)
+	return responseBytes, nil
+}
+
+// WriteResponse takes any response implementing APIResponse, serializes it,
+// and writes it to the provided writer.
+func WriteResponse(writer io.Writer, resp APIResponse) error {
+	responseBytes, err := resp.Serialize()
 	if err != nil {
-		return fmt.Errorf("writing response: %w", err)
+		return fmt.Errorf("serializing response: %w", err)
+	}
+
+	// Send the complete response
+	_, err = writer.Write(responseBytes)
+	if err != nil {
+		return fmt.Errorf("writing response bytes: %w", err)
 	}
 	return nil
 }

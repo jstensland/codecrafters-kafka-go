@@ -248,9 +248,9 @@ func TestWriteResponse(t *testing.T) {
 				APIKeys:        []APIKeyVersion{{APIKey: 18, MinVersion: 4, MaxVersion: 4}},
 				ThrottleTimeMs: 0,
 			},
-			expectedOutput: []byte{},                                         // No output expected
-			writer:         &errorWriter{err: errors.New("failed to write")}, //nolint:err113
-			expectedErr:    errors.New("writing response: failed to write"),  //nolint:err113 // Expect wrapped error
+			expectedOutput: []byte{},                                              // No output expected
+			writer:         &errorWriter{err: errors.New("failed to write")},      //nolint:err113
+			expectedErr:    errors.New("writing response bytes: failed to write"), //nolint:err113 // Expect wrapped error
 		},
 	}
 

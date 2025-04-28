@@ -127,8 +127,17 @@ func (s *Server) HandleConnection(conn net.Conn, readTimeout time.Duration) {
 			}
 		}
 
+		// Ensure the response implements the APIResponse interface
+		apiResponse, ok := response.(protocol.APIResponse)
+		if !ok {
+			// This should ideally not happen if all handlers return types implementing APIResponse
+			log.Printf("Error: Response type %T does not implement protocol.APIResponse", response)
+			// Handle this error appropriately, maybe close connection or send a generic error
+			return // Close connection as we cannot serialize the response
+		}
+
 		// Write the appropriate response using the protocol package function
-		writeErr = protocol.WriteResponse(conn, response.(*protocol.Response)) // Pass the interface{} directly
+		writeErr = protocol.WriteResponse(conn, apiResponse) // Pass the APIResponse interface
 		if writeErr != nil {
 			log.Printf("Error writing response: %v", writeErr)
 			return // Close connection if writing fails
