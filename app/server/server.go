@@ -114,7 +114,9 @@ func (s *Server) HandleConnection(conn net.Conn, readTimeout time.Duration) {
 		case handlers.APIKeyAPIVersions:
 			// Call the exported handler from the handlers package
 			response = handlers.HandleAPIVersionsRequest(req)
-		// TODO: Add case for protocol.APIKeyDescribeTopicPartitions here later
+		case handlers.APIKeyDescribeTopicPartitions:
+			// Call the exported handler from the handlers package
+			response = handlers.HandleDescribeTopicPartitionsRequest(req)
 		default:
 			// Handle other unknown API keys
 			log.Printf("Received unsupported ApiKey: %d", req.APIKey)

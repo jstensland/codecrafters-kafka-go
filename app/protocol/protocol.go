@@ -44,8 +44,9 @@ const (
 	ErrorCodeLength     = 2
 
 	// Error codes (Exported)
-	ErrorNone               = 0
-	ErrorUnsupportedVersion = 35
+	ErrorNone                    = 0
+	ErrorUnknownTopicOrPartition = 3
+	ErrorUnsupportedVersion      = 35
 )
 
 // WriteCompactArray encodes a slice of Serializable items into the Kafka COMPACT_ARRAY format
