@@ -98,7 +98,9 @@ func ParseDescribeTopicPartitionsRequest(payload []byte) (*DescribeTopicPartitio
 	if taggedFieldsByte != 0 {
 		// v0 of DescribeTopicPartitions does not support tagged fields.
 		// Log a warning but continue parsing as per the structure.
-		log.Printf("WARN: Received non-zero tagged fields byte (0x%X) for DescribeTopicPartitionsRequestV0, expected 0", taggedFieldsByte)
+		log.Printf(
+			"WARN: Received non-zero tagged fields byte (0x%X) for DescribeTopicPartitionsRequestV0, expected 0",
+			taggedFieldsByte)
 		// In a stricter implementation, this might be an error.
 		// If tagged fields were actually present, the offset calculation would need to skip them.
 	}
@@ -109,7 +111,9 @@ func ParseDescribeTopicPartitionsRequest(payload []byte) (*DescribeTopicPartitio
 	if bytesRead <= 0 {
 		// bytesRead == 0 means buffer too small
 		// bytesRead < 0 means value overflowed uint64
-		return nil, fmt.Errorf("failed to read topic array length (uvarint) bytesRead=%d: %w", bytesRead, ErrParseDescribeTopicRequest)
+		return nil, fmt.Errorf(
+			"failed to read topic array length (uvarint) bytesRead=%d: %w",
+			bytesRead, ErrParseDescribeTopicRequest)
 	}
 	offset += bytesRead
 
@@ -117,7 +121,9 @@ func ParseDescribeTopicPartitionsRequest(payload []byte) (*DescribeTopicPartitio
 	log.Printf("DEBUG: Topic Array Length (N+1): %d\n", topicArrayLenPlusOne)
 
 	if topicArrayLenPlusOne == 0 {
-		return nil, fmt.Errorf("invalid topic array length uvarint N+1 cannot be 0: %w", ErrParseDescribeTopicRequest)
+		return nil, fmt.Errorf(
+			"invalid topic array length uvarint N+1 cannot be 0: %w",
+			ErrParseDescribeTopicRequest)
 	}
 	topicArrayLen := int(topicArrayLenPlusOne - 1) // Actual length is N
 
@@ -126,7 +132,8 @@ func ParseDescribeTopicPartitionsRequest(payload []byte) (*DescribeTopicPartitio
 		// 2. Parse Topic Name Length (Uvarint)
 		topicNameLenPlusOne, bytesReadNameLen := binary.Uvarint(payload[offset:])
 		if bytesReadNameLen <= 0 {
-			return nil, fmt.Errorf("failed to read topic name length (uvarint) bytesRead=%d: %w", bytesReadNameLen, ErrParseDescribeTopicRequest)
+			return nil, fmt.Errorf("failed to read topic name length (uvarint) bytesRead=%d: %w",
+				bytesReadNameLen, ErrParseDescribeTopicRequest)
 		}
 		offset += bytesReadNameLen
 
@@ -134,18 +141,19 @@ func ParseDescribeTopicPartitionsRequest(payload []byte) (*DescribeTopicPartitio
 			// This represents a null string in Kafka compact format.
 			// Handle appropriately if null topic names are possible/expected.
 			// For now, treat as an error or empty string? Let's assume error for now.
-			return nil, fmt.Errorf("invalid topic name length uvarint N+1 cannot be 0 for non-null string: %w", ErrParseDescribeTopicRequest)
+			return nil, fmt.Errorf("invalid topic name length uvarint N+1 cannot be 0 for non-null string: %w",
+				ErrParseDescribeTopicRequest)
 			// Alternatively, handle as empty string: topicName = ""
 		}
 		topicNameLen := int(topicNameLenPlusOne - 1) // Actual length is N
 
 		log.Printf("DEBUG: Topic Name Length (N+1): %d, Bytes Read: %d\n", topicNameLenPlusOne, bytesReadNameLen)
 		log.Printf("DEBUG: Actual Topic Name Length: %d\n", topicNameLen)
-		log.Printf("DEBUG: offset after name length: %d and payload length: %d\n", offset, len(payload))
 
 		// 3. Parse Topic Name (string)
 		if len(payload) < offset+topicNameLen {
-			return nil, fmt.Errorf("payload too short for topic name (expected %d bytes, have %d): %w", topicNameLen, len(payload)-offset, ErrParseDescribeTopicRequest)
+			return nil, fmt.Errorf("payload too short for topic name (expected %d bytes, have %d): %w",
+				topicNameLen, len(payload)-offset, ErrParseDescribeTopicRequest)
 		}
 		topicName := string(payload[offset : offset+topicNameLen])
 		offset += topicNameLen
@@ -162,12 +170,17 @@ func ParseDescribeTopicPartitionsRequest(payload []byte) (*DescribeTopicPartitio
 		// offset += 4
 		// TODO: Skip partition indices if needed later
 
+		log.Printf("DEBUG: Topic Name: %s\n", topicName)
+
 	} else {
 		// Handle case with zero topics if necessary, though the test case implies one topic.
 		req.Topics = []*DescribeTopicPartitionsRequestTopicV0{}
 	}
 
-	// Ignore remaining fields for v0 (IncludeClusterAuthorizedOperations, IncludeTopicAuthorizedOperations)
+	// Ignore remaining fields
+	// - Response Partition Limit
+	// - Cursor
+	// - Tag Buffer
 
 	return req, nil
 }
@@ -221,8 +234,13 @@ func (r *DescribeTopicPartitionsResponseV0) Serialize() ([]byte, error) {
 		topicsDataSize += len(topicBytes)
 	}
 
+	// Calculate size needed for the Uvarint length prefix (N+1) for the compact array
+	varintBuf := make([]byte, binary.MaxVarintLen64) // Max size for a uvarint
 	// #nosec G115 -- Conversion is safe in this context
-	totalSize := protocol.SizeFieldLength + protocol.CorrelationIDLength + 4 + 4 + topicsDataSize // ThrottleTime(4) + TopicsArrayLen(4)
+	arrayLengthVarintSize := protocol.WriteUvarint(varintBuf, uint64(len(r.Topics)+1))
+
+	// ThrottleTime(4) + TopicsArrayLen(Uvarint)
+	totalSize := protocol.SizeFieldLength + protocol.CorrelationIDLength + 4 + arrayLengthVarintSize + topicsDataSize
 	buf := make([]byte, totalSize)
 	offset := 0
 
@@ -240,10 +258,10 @@ func (r *DescribeTopicPartitionsResponseV0) Serialize() ([]byte, error) {
 	binary.BigEndian.PutUint32(buf[offset:offset+4], uint32(r.ThrottleTimeMs))
 	offset += 4
 
-	// Write Topics Array Length (int32)
+	// Write Topics Array Length (Uvarint N+1)
 	// #nosec G115 -- Conversion is safe in this context
-	binary.BigEndian.PutUint32(buf[offset:offset+4], uint32(len(r.Topics)))
-	offset += 4
+	nBytes := protocol.WriteUvarint(buf[offset:], uint64(len(r.Topics)+1))
+	offset += nBytes
 
 	// Write Topic Payloads
 	for _, topicBytes := range topicPayloads {
@@ -252,7 +270,8 @@ func (r *DescribeTopicPartitionsResponseV0) Serialize() ([]byte, error) {
 	}
 
 	if offset != totalSize {
-		return nil, fmt.Errorf("describe topic partitions response serialize size mismatch: expected %d, got %d", totalSize, offset)
+		return nil, fmt.Errorf("describe topic partitions response serialize size mismatch: expected %d, got %d",
+			totalSize, offset)
 	}
 
 	return buf, nil
@@ -266,7 +285,7 @@ func HandleDescribeTopicPartitionsRequest(req *BaseRequest) *DescribeTopicPartit
 	if err != nil {
 		// Handle parsing error - potentially return a generic error response
 		// For now, log and return a basic error response matching the structure
-		fmt.Printf("Error parsing DescribeTopicPartitions request: %v\n", err)
+		log.Printf("Error parsing DescribeTopicPartitions request: %v\n", err)
 		// Returning a response with error code might be complex if parsing failed early.
 		// For simplicity in this stage, we might assume parsing succeeds enough
 		// to get the correlation ID, or return a default error structure.
