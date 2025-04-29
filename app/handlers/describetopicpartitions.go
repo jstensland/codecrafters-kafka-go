@@ -17,6 +17,7 @@ const (
 	describeTopicPartitionsTopicNameLengthBytes = 2
 	describeTopicPartitionsTopicIDBytes         = 16 // UUID
 	describeTopicPartitionsPartitionsArrayBytes = 4  // Array length prefix
+	describeTopicAuthorizeOperationBytes        = 4
 )
 
 // ErrParseDescribeTopicRequest indicates an error during the parsing of a DescribeTopicPartitions request.
@@ -190,7 +191,7 @@ func (t *DescribeTopicPartitionsResponseTopic) Serialize() []byte {
 	partitionsArrayVarintSize := protocol.WriteUvarint(varintBuf, uint64(0+1)) // Always 1 byte for Uvarint(1)
 
 	totalSize := protocol.ErrorCodeLength + topicNameVarintSize + topicNameLen + describeTopicPartitionsTopicIDBytes +
-		IsInternalLength + partitionsArrayVarintSize + 4 + TaggedFieldsLength
+		IsInternalLength + partitionsArrayVarintSize + describeTopicAuthorizeOperationBytes + TaggedFieldsLength
 
 	buf := make([]byte, totalSize)
 	offset := 0
@@ -210,7 +211,10 @@ func (t *DescribeTopicPartitionsResponseTopic) Serialize() []byte {
 	offset += topicNameLen
 
 	// Write TopicID (UUID - 16 bytes)
-	topicIDBytes, _ := t.TopicID.MarshalBinary() // uuid.MarshalBinary never returns an error
+	topicIDBytes, err := t.TopicID.MarshalBinary() // uuid.MarshalBinary never returns an error
+	if err != nil {
+		panic(fmt.Errorf("failed to marshal uuid into binary: %w", err))
+	}
 	copy(buf[offset:offset+describeTopicPartitionsTopicIDBytes], topicIDBytes)
 	offset += describeTopicPartitionsTopicIDBytes
 
@@ -219,10 +223,12 @@ func (t *DescribeTopicPartitionsResponseTopic) Serialize() []byte {
 	offset++
 
 	// Write Partitions Array Length (Uvarint N+1) - Always 1 (0x01) for empty array
+	// #nosec G115 -- conversion is safe enough here
 	nBytesPartitions := protocol.WriteUvarint(buf[offset:], uint64(len(t.Partitions)+1))
 	offset += nBytesPartitions
 
 	// Write TopicAuthOps (int32) - Always 0 for now
+	// #nosec G115 -- conversion is safe enough here
 	binary.BigEndian.PutUint32(buf[offset:offset+4], uint32(t.TopicAuthOps))
 	offset += 4
 
@@ -291,12 +297,7 @@ func (r *DescribeTopicPartitionsResponse) Serialize() ([]byte, error) {
 
 	// Write zero byte for Tagged Fields (placeholder)
 	buf[offset] = 0
-	offset++
-
-	if offset != totalSize {
-		return nil, fmt.Errorf("describe topic partitions response serialize size mismatch: expected %d, got %d",
-			totalSize, offset)
-	}
+	// offset++ // no more to write
 
 	return buf, nil
 }

@@ -1,11 +1,10 @@
-//nolint:err113 // dynamic errors are useful in test cases
+//nolint:err113,gosec // dynamic errors are useful in test cases, type conversions are fine for tests
 package handlers_test
 
 import (
 	"bytes"
 	"encoding/binary"
 	"errors"
-	"fmt"
 	"testing"
 
 	"github.com/codecrafters-io/kafka-starter-go/app/handlers"
@@ -81,7 +80,8 @@ func TestParseDescribeTopicPartitionsRequest(t *testing.T) {
 				// Missing topic array length uvarint
 			},
 			expectedReq: nil,
-			expectedErr: errors.New("failed to read topic array length (uvarint) bytesRead=0: error parsing describe topic partitions request"),
+			expectedErr: errors.New(
+				"failed to read topic array length (uvarint) bytesRead=0: error parsing describe topic partitions request"),
 		},
 		{
 			name: "Payload too short for topic name length uvarint",
@@ -92,7 +92,8 @@ func TestParseDescribeTopicPartitionsRequest(t *testing.T) {
 				// Missing topic name length uvarint
 			},
 			expectedReq: nil,
-			expectedErr: errors.New("failed to read topic name length (uvarint) bytesRead=0: error parsing describe topic partitions request"),
+			expectedErr: errors.New(
+				"failed to read topic name length (uvarint) bytesRead=0: error parsing describe topic partitions request"),
 		},
 		{
 			name: "Payload too short for topic name",
@@ -104,7 +105,8 @@ func TestParseDescribeTopicPartitionsRequest(t *testing.T) {
 				't', 'e', 's', // Missing 't'
 			},
 			expectedReq: nil,
-			expectedErr: errors.New("payload too short for topic name (expected 4 bytes, have 3): error parsing describe topic partitions request"),
+			expectedErr: errors.New(
+				"payload too short for topic name (expected 4 bytes, have 3): error parsing describe topic partitions request"),
 		},
 		{
 			name: "Payload too short for partition index array length",
@@ -117,7 +119,8 @@ func TestParseDescribeTopicPartitionsRequest(t *testing.T) {
 				0x00, 0x00, 0x00, // Missing byte for partition index array length
 			},
 			expectedReq: nil,
-			expectedErr: errors.New("payload too short for partition index array length: error parsing describe topic partitions request"),
+			expectedErr: errors.New(
+				"payload too short for partition index array length: error parsing describe topic partitions request"),
 		},
 	}
 
@@ -148,7 +151,8 @@ func TestDescribeTopicPartitionsResponseTopic_Serialize(t *testing.T) {
 	}
 
 	// Expected format:
-	// ErrorCode(2) + TopicNameLen(Uvarint N+1) + TopicName(N) + TopicID(16) + IsInternal(1) + PartitionsArrayLen(Uvarint N+1) + TopicAuthOps(4) + TaggedFields(1)
+	// ErrorCode(2) + TopicNameLen(Uvarint N+1) + TopicName(N) + TopicID(16) + IsInternal(1) +
+	// PartitionsArrayLen(Uvarint N+1) + TopicAuthOps(4) + TaggedFields(1)
 	expectedBytes := []byte{
 		0x00, 0x03, // ErrorCode = 3
 		0x09,                                   // TopicName Length = 8 (Uvarint 9 means N=8)
@@ -185,16 +189,18 @@ func TestDescribeTopicPartitionsResponse_Serialize(t *testing.T) {
 	}
 
 	// Calculate expected size:
-	// Size(4) + CorrelationID(4) + TaggedFieldsHeader(1) + ThrottleTime(4) + TopicsArrayLen(Uvarint) + TopicData + Cursor(1) + TaggedFieldsFooter(1)
+	// Size(4) + CorrelationID(4) + TaggedFieldsHeader(1) + ThrottleTime(4) + TopicsArrayLen(Uvarint) +
+	// TopicData + Cursor(1) + TaggedFieldsFooter(1)
 	topicData := resp.Topics[0].Serialize()
 	topicDataSize := len(topicData)
 	// Calculate size needed for the Uvarint length prefix (N+1) for the compact array
 	varintBuf := make([]byte, binary.MaxVarintLen64) // Max size for a uvarint
 	// #nosec G115 -- Conversion is safe in this context
 	arrayLengthVarintSize := protocol.WriteUvarint(varintBuf, uint64(len(resp.Topics)+1))
+	// Size, CorrID, TaggedHdr, Throttle, ArrayLen, TopicData, Cursor, TaggedFtr
+	expectedTotalSize := 4 + 4 + 1 + 4 + arrayLengthVarintSize + topicDataSize + 1 + 1
 	// #nosec G115 -- Conversion is safe in this context
-	expectedTotalSize := 4 + 4 + 1 + 4 + arrayLengthVarintSize + topicDataSize + 1 + 1 // Size, CorrID, TaggedHdr, Throttle, ArrayLen, TopicData, Cursor, TaggedFtr
-	expectedMessageSize := uint32(expectedTotalSize - 4)                               // Size field value
+	expectedMessageSize := uint32(expectedTotalSize - 4) // Size field value
 
 	expectedBytes := new(bytes.Buffer)
 	// Size
@@ -211,6 +217,7 @@ func TestDescribeTopicPartitionsResponse_Serialize(t *testing.T) {
 	require.NoError(t, err)
 	// Topics Array Length (Uvarint N+1)
 	lenBytes := make([]byte, arrayLengthVarintSize)
+	// #nosec G115 -- Conversion is safe in this context
 	protocol.WriteUvarint(lenBytes, uint64(len(resp.Topics)+1))
 	_, err = expectedBytes.Write(lenBytes)
 	require.NoError(t, err)
@@ -227,10 +234,10 @@ func TestDescribeTopicPartitionsResponse_Serialize(t *testing.T) {
 	actualBytes, err := resp.Serialize()
 	require.NoError(t, err)
 	assert.Equal(t, expectedBytes.Bytes(), actualBytes)
-	// #nosec G115 -- Conversion is safe in this context
-	assert.Equal(t, expectedTotalSize, len(actualBytes), "Total serialized length mismatch")
+	assert.Len(t, actualBytes, expectedTotalSize, "Total serialized length mismatch")
 }
 
+//nolint:funlen // Test function is long due to detailed serialization checks
 func TestHandleDescribeTopicPartitionsRequest(t *testing.T) {
 	topicName := "my-test-topic"
 	correlationID := uint32(9876)
@@ -302,7 +309,8 @@ func TestHandleDescribeTopicPartitionsRequest(t *testing.T) {
 	varintBuf := make([]byte, binary.MaxVarintLen64) // Max size for a uvarint
 	// #nosec G115 -- Conversion is safe in this context
 	arrayLengthVarintSize := protocol.WriteUvarint(varintBuf, uint64(len(response.Topics)+1))
-	expectedTotalSize := 4 + 4 + 1 + 4 + arrayLengthVarintSize + len(expectedTopicBytes) + 1 + 1 // Size, CorrID, TaggedHdr, Throttle, ArrayLen, TopicData, Cursor, TaggedFtr
+	// Size, CorrID, TaggedHdr, Throttle, ArrayLen, TopicData, Cursor, TaggedFtr
+	expectedTotalSize := 4 + 4 + 1 + 4 + arrayLengthVarintSize + len(expectedTopicBytes) + 1 + 1
 	expectedMessageSize := uint32(expectedTotalSize - 4)
 
 	expectedBuf := new(bytes.Buffer)
@@ -364,7 +372,8 @@ func TestHandleDescribeTopicPartitionsRequest_ParseError(t *testing.T) {
 	// The handler currently returns a topic with an error code even on parse failure.
 	// assert.Empty(t, response.Topics, "Topics should be empty on parse error")
 	require.Len(t, response.Topics, 1, "Should have one topic in error response")
-	assert.Equal(t, int16(protocol.ErrorUnknownTopicOrPartition), response.Topics[0].ErrorCode, "Error topic should have correct error code")
+	assert.Equal(t, int16(protocol.ErrorUnknownTopicOrPartition), response.Topics[0].ErrorCode,
+		"Error topic should have correct error code")
 	assert.Equal(t, "", response.Topics[0].TopicName, "Error topic should have empty name")
 
 	// Check serialization of the error response
@@ -377,8 +386,9 @@ func TestHandleDescribeTopicPartitionsRequest_ParseError(t *testing.T) {
 	// Calculate size needed for the Uvarint length prefix (N+1) for the compact array (N=1)
 	varintBuf := make([]byte, binary.MaxVarintLen64) // Max size for a uvarint
 	// #nosec G115 -- Conversion is safe in this context
-	arrayLengthVarintSize := protocol.WriteUvarint(varintBuf, uint64(1+1))                       // Length is 1 byte for Uvarint(2)
-	expectedTotalSize := 4 + 4 + 1 + 4 + arrayLengthVarintSize + len(expectedTopicBytes) + 1 + 1 // Size, CorrID, TaggedHdr, Throttle, ArrayLen(1), TopicData, Cursor, TaggedFtr
+	arrayLengthVarintSize := protocol.WriteUvarint(varintBuf, uint64(1+1)) // Length is 1 byte for Uvarint(2)
+	// Size, CorrID, TaggedHdr, Throttle, ArrayLen(1), TopicData, Cursor, TaggedFtr
+	expectedTotalSize := 4 + 4 + 1 + 4 + arrayLengthVarintSize + len(expectedTopicBytes) + 1 + 1
 	expectedMessageSize := uint32(expectedTotalSize - 4)
 
 	expectedBuf := new(bytes.Buffer)
@@ -407,28 +417,4 @@ func TestHandleDescribeTopicPartitionsRequest_ParseError(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, expectedBuf.Bytes(), serializedResp, "Serialized error response bytes do not match expected")
-}
-
-// Helper function to create a DescribeTopicPartitions request payload
-func createDescribeTopicPartitionsPayload(topicName string) ([]byte, error) {
-	buf := new(bytes.Buffer)
-	// Topics Array Length = 1
-	if err := binary.Write(buf, binary.BigEndian, int32(1)); err != nil {
-		return nil, fmt.Errorf("writing topic array len: %w", err)
-	}
-	// Topic Name Length
-	topicNameBytes := []byte(topicName)
-	// #nosec G115 -- Conversion is safe in this context
-	if err := binary.Write(buf, binary.BigEndian, int16(len(topicNameBytes))); err != nil {
-		return nil, fmt.Errorf("writing topic name len: %w", err)
-	}
-	// Topic Name
-	if _, err := buf.Write(topicNameBytes); err != nil {
-		return nil, fmt.Errorf("writing topic name: %w", err)
-	}
-	// Partition Index Array Length = 0
-	if err := binary.Write(buf, binary.BigEndian, int32(0)); err != nil {
-		return nil, fmt.Errorf("writing partition array len: %w", err)
-	}
-	return buf.Bytes(), nil
 }
