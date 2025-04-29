@@ -19,7 +19,7 @@ func TestParseDescribeTopicPartitionsRequest(t *testing.T) {
 	testCases := []struct {
 		name        string
 		payload     []byte
-		expectedReq *handlers.DescribeTopicPartitionsRequestV0
+		expectedReq *handlers.DescribeTopicPartitionsRequest
 		expectedErr error
 	}{
 		{
@@ -35,8 +35,8 @@ func TestParseDescribeTopicPartitionsRequest(t *testing.T) {
 				't', 'e', 's', 't', // Topic Name = "test"
 				0x00, 0x00, 0x00, 0x00, // Partition Index Array Length = 0
 			},
-			expectedReq: &handlers.DescribeTopicPartitionsRequestV0{
-				Topics: []*handlers.DescribeTopicPartitionsRequestTopicV0{
+			expectedReq: &handlers.DescribeTopicPartitionsRequest{
+				Topics: []*handlers.DescribeTopicPartitionsRequestTopic{
 					{TopicName: "test"},
 				},
 			},
@@ -47,8 +47,8 @@ func TestParseDescribeTopicPartitionsRequest(t *testing.T) {
 			payload: []byte{
 				0x00, 0x00, 0x00, 0x00, // Topics Array Length = 0
 			},
-			expectedReq: &handlers.DescribeTopicPartitionsRequestV0{
-				Topics: []*handlers.DescribeTopicPartitionsRequestTopicV0{},
+			expectedReq: &handlers.DescribeTopicPartitionsRequest{
+				Topics: []*handlers.DescribeTopicPartitionsRequestTopic{},
 			},
 			expectedErr: nil,
 		},
@@ -107,12 +107,12 @@ func TestParseDescribeTopicPartitionsRequest(t *testing.T) {
 }
 
 func TestDescribeTopicPartitionsResponseTopicV0_Serialize(t *testing.T) {
-	topic := &handlers.DescribeTopicPartitionsResponseTopicV0{
+	topic := &handlers.DescribeTopicPartitionsResponseTopic{
 		ErrorCode:    protocol.ErrorUnknownTopicOrPartition,
 		TopicName:    "my-topic",
 		TopicID:      uuid.Nil,
 		IsInternal:   false,
-		Partitions:   []*handlers.DescribeTopicPartitionsResponsePartitionV0{},
+		Partitions:   []*handlers.DescribeTopicPartitionsResponsePartition{},
 		TopicAuthOps: 0,
 	}
 
@@ -133,16 +133,16 @@ func TestDescribeTopicPartitionsResponseV0_Serialize(t *testing.T) {
 	correlationID := uint32(12345)
 	topicName := "unknown-topic"
 
-	resp := &handlers.DescribeTopicPartitionsResponseV0{
+	resp := &handlers.DescribeTopicPartitionsResponse{
 		CorrelationID:  correlationID,
 		ThrottleTimeMs: 0,
-		Topics: []*handlers.DescribeTopicPartitionsResponseTopicV0{
+		Topics: []*handlers.DescribeTopicPartitionsResponseTopic{
 			{
 				ErrorCode:    protocol.ErrorUnknownTopicOrPartition,
 				TopicName:    topicName,
 				TopicID:      uuid.Nil,
 				IsInternal:   false,
-				Partitions:   []*handlers.DescribeTopicPartitionsResponsePartitionV0{},
+				Partitions:   []*handlers.DescribeTopicPartitionsResponsePartition{},
 				TopicAuthOps: 0,
 			},
 		},

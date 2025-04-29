@@ -11,57 +11,57 @@ import (
 	"github.com/google/uuid"
 )
 
-// Constants specific to DescribeTopicPartitions v0
+// Constants specific to DescribeTopicPartitions
 const (
-	// Field lengths for DescribeTopicPartitions v0 Response
-	describeTopicPartitionsV0TopicNameLengthBytes = 2
-	describeTopicPartitionsV0TopicIDBytes         = 16 // UUID
-	describeTopicPartitionsV0PartitionsArrayBytes = 4  // Array length prefix
+	// Field lengths for DescribeTopicPartitions Response
+	describeTopicPartitionsTopicNameLengthBytes = 2
+	describeTopicPartitionsTopicIDBytes         = 16 // UUID
+	describeTopicPartitionsPartitionsArrayBytes = 4  // Array length prefix
 )
 
 // ErrParseDescribeTopicRequest indicates an error during the parsing of a DescribeTopicPartitions request.
 var ErrParseDescribeTopicRequest = errors.New("error parsing describe topic partitions request")
 
-// DescribeTopicPartitionsRequestTopicV0 represents a topic in the DescribeTopicPartitions request v0.
-type DescribeTopicPartitionsRequestTopicV0 struct {
+// DescribeTopicPartitionsRequestTopic represents a topic in the DescribeTopicPartitions request.
+type DescribeTopicPartitionsRequestTopic struct {
 	TopicName string
 	// PartitionIndexes are ignored for now as per requirements
 }
 
-// DescribeTopicPartitionsRequestV0 represents the DescribeTopicPartitions request v0.
-type DescribeTopicPartitionsRequestV0 struct {
+// DescribeTopicPartitionsRequest represents the DescribeTopicPartitions request
+type DescribeTopicPartitionsRequest struct {
 	ClientID string // Added ClientID field
-	Topics   []*DescribeTopicPartitionsRequestTopicV0
-	// IncludeClusterAuthorizedOperations and IncludeTopicAuthorizedOperations are ignored for v0
+	Topics   []*DescribeTopicPartitionsRequestTopic
+	// IncludeClusterAuthorizedOperations and IncludeTopicAuthorizedOperations are ignored
 }
 
-// DescribeTopicPartitionsResponsePartitionV0 represents a partition in the DescribeTopicPartitions response v0.
+// DescribeTopicPartitionsResponsePartition represents a partition in the DescribeTopicPartitions response.
 // Note: This struct is defined but will be empty in the response for UNKNOWN_TOPIC_OR_PARTITION.
-type DescribeTopicPartitionsResponsePartitionV0 struct {
+type DescribeTopicPartitionsResponsePartition struct {
 	// Fields omitted as the array will be empty
 }
 
-// DescribeTopicPartitionsResponseTopicV0 represents a topic in the DescribeTopicPartitions response v0.
-type DescribeTopicPartitionsResponseTopicV0 struct {
+// DescribeTopicPartitionsResponseTopic represents a topic in the DescribeTopicPartitions response.
+type DescribeTopicPartitionsResponseTopic struct {
 	ErrorCode    int16
 	TopicName    string
 	TopicID      uuid.UUID
-	IsInternal   bool // Not used in v0, defaults to false
-	Partitions   []*DescribeTopicPartitionsResponsePartitionV0
-	TopicAuthOps int32 // Not used in v0, defaults to 0
+	IsInternal   bool
+	Partitions   []*DescribeTopicPartitionsResponsePartition
+	TopicAuthOps int32
 }
 
-// DescribeTopicPartitionsResponseV0 represents the DescribeTopicPartitions response v0.
-type DescribeTopicPartitionsResponseV0 struct {
+// DescribeTopicPartitionsResponse represents the DescribeTopicPartitions response.
+type DescribeTopicPartitionsResponse struct {
 	CorrelationID  uint32
-	ThrottleTimeMs int32 // Not used in v0, defaults to 0
-	Topics         []*DescribeTopicPartitionsResponseTopicV0
+	ThrottleTimeMs int32
+	Topics         []*DescribeTopicPartitionsResponseTopic
 }
 
-// ParseDescribeTopicPartitionsRequest parses the raw byte payload for a DescribeTopicPartitions v0 request.
+// ParseDescribeTopicPartitionsRequest parses the raw byte payload for a DescribeTopicPartitions request.
 // For this stage, we only care about the first topic name.
-func ParseDescribeTopicPartitionsRequest(payload []byte) (*DescribeTopicPartitionsRequestV0, error) {
-	req := &DescribeTopicPartitionsRequestV0{}
+func ParseDescribeTopicPartitionsRequest(payload []byte) (*DescribeTopicPartitionsRequest, error) {
+	req := &DescribeTopicPartitionsRequest{}
 	offset := 0
 
 	// Parse Client ID Length (int16)
@@ -89,17 +89,17 @@ func ParseDescribeTopicPartitionsRequest(payload []byte) (*DescribeTopicPartitio
 
 	log.Printf("DEBUG: ClientID: %s\n", req.ClientID)
 
-	// Parse Tagged Fields byte (UVarint count, expected to be 0 for v0)
+	// Parse Tagged Fields byte (UVarint count, expected to be 0)
 	if len(payload) < offset+1 {
 		return nil, fmt.Errorf("payload too short for tagged fields byte: %w", ErrParseDescribeTopicRequest)
 	}
 	taggedFieldsByte := payload[offset]
 	offset++
 	if taggedFieldsByte != 0 {
-		// v0 of DescribeTopicPartitions does not support tagged fields.
+		// DescribeTopicPartitions does not support tagged fields right now.
 		// Log a warning but continue parsing as per the structure.
 		log.Printf(
-			"WARN: Received non-zero tagged fields byte (0x%X) for DescribeTopicPartitionsRequestV0, expected 0",
+			"WARN: Received non-zero tagged fields byte (0x%X) for DescribeTopicPartitionsRequest, expected 0",
 			taggedFieldsByte)
 		// In a stricter implementation, this might be an error.
 		// If tagged fields were actually present, the offset calculation would need to skip them.
@@ -158,7 +158,7 @@ func ParseDescribeTopicPartitionsRequest(payload []byte) (*DescribeTopicPartitio
 		topicName := string(payload[offset : offset+topicNameLen])
 		offset += topicNameLen
 
-		req.Topics = append(req.Topics, &DescribeTopicPartitionsRequestTopicV0{
+		req.Topics = append(req.Topics, &DescribeTopicPartitionsRequestTopic{
 			TopicName: topicName,
 		})
 
@@ -174,7 +174,7 @@ func ParseDescribeTopicPartitionsRequest(payload []byte) (*DescribeTopicPartitio
 
 	} else {
 		// Handle case with zero topics if necessary, though the test case implies one topic.
-		req.Topics = []*DescribeTopicPartitionsRequestTopicV0{}
+		req.Topics = []*DescribeTopicPartitionsRequestTopic{}
 	}
 
 	// Ignore remaining fields
@@ -185,8 +185,8 @@ func ParseDescribeTopicPartitionsRequest(payload []byte) (*DescribeTopicPartitio
 	return req, nil
 }
 
-// Serialize serializes the DescribeTopicPartitionsResponseTopicV0 struct into bytes.
-func (t *DescribeTopicPartitionsResponseTopicV0) Serialize() []byte {
+// Serialize serializes the DescribeTopicPartitionsResponseTopic struct into bytes.
+func (t *DescribeTopicPartitionsResponseTopic) Serialize() []byte {
 	// Calculate size: ErrorCode(2) + TopicNameLen(Uvarint) + TopicName + TopicID(16) + PartitionsArrayLen(4)
 	topicNameBytes := []byte(t.TopicName)
 	topicNameLen := len(topicNameBytes)
@@ -201,7 +201,7 @@ func (t *DescribeTopicPartitionsResponseTopicV0) Serialize() []byte {
 
 	// Calculate total size: ErrorCode(2) + TopicNameLen(Uvarint) + TopicName + TopicID(16) + IsInternal(1) + PartitionsArrayLen(Uvarint) + TopicAuthOps(4) + TagBuffer(1)
 	// #nosec G115 -- Conversion is safe in this context
-	totalSize := protocol.ErrorCodeLength + topicNameVarintSize + topicNameLen + describeTopicPartitionsV0TopicIDBytes + 1 + partitionsArrayVarintSize + 4 + TaggedFieldsLength
+	totalSize := protocol.ErrorCodeLength + topicNameVarintSize + topicNameLen + describeTopicPartitionsTopicIDBytes + 1 + partitionsArrayVarintSize + 4 + TaggedFieldsLength
 
 	buf := make([]byte, totalSize)
 	offset := 0
@@ -222,10 +222,10 @@ func (t *DescribeTopicPartitionsResponseTopicV0) Serialize() []byte {
 
 	// Write TopicID (UUID - 16 bytes)
 	topicIDBytes, _ := t.TopicID.MarshalBinary() // uuid.MarshalBinary never returns an error
-	copy(buf[offset:offset+describeTopicPartitionsV0TopicIDBytes], topicIDBytes)
-	offset += describeTopicPartitionsV0TopicIDBytes
+	copy(buf[offset:offset+describeTopicPartitionsTopicIDBytes], topicIDBytes)
+	offset += describeTopicPartitionsTopicIDBytes
 
-	// Write IsInternal (byte) - Always false (0) for v0
+	// Write IsInternal (byte) - Always false (0) for now
 	buf[offset] = 0
 	offset++
 
@@ -233,7 +233,7 @@ func (t *DescribeTopicPartitionsResponseTopicV0) Serialize() []byte {
 	nBytesPartitions := protocol.WriteUvarint(buf[offset:], uint64(len(t.Partitions)+1))
 	offset += nBytesPartitions
 
-	// Write TopicAuthOps (int32) - Always 0 for v0
+	// Write TopicAuthOps (int32) - Always 0 for now
 	binary.BigEndian.PutUint32(buf[offset:offset+4], uint32(t.TopicAuthOps))
 	offset += 4
 
@@ -244,9 +244,9 @@ func (t *DescribeTopicPartitionsResponseTopicV0) Serialize() []byte {
 	return buf
 }
 
-// Serialize serializes the DescribeTopicPartitionsResponseV0 struct into bytes.
+// Serialize serializes the DescribeTopicPartitionsResponse struct into bytes.
 // Implements the protocol.APIResponse interface.
-func (r *DescribeTopicPartitionsResponseV0) Serialize() ([]byte, error) {
+func (r *DescribeTopicPartitionsResponse) Serialize() ([]byte, error) {
 	// Calculate total size: Size(4) + CorrelationID(4) + ThrottleTime(4) + TopicsArrayLen(4) + TopicsData
 	topicPayloads := make([][]byte, len(r.Topics))
 	topicsDataSize := 0
@@ -306,8 +306,6 @@ func (r *DescribeTopicPartitionsResponseV0) Serialize() ([]byte, error) {
 		offset += len(topicBytes)
 	}
 
-	// Note: DescribeTopicPartitions Response v0 does not have a NextCursor or a tag buffer at the end.
-
 	if offset != totalSize {
 		return nil, fmt.Errorf("describe topic partitions response serialize size mismatch: expected %d, got %d",
 			totalSize, offset)
@@ -316,9 +314,9 @@ func (r *DescribeTopicPartitionsResponseV0) Serialize() ([]byte, error) {
 	return buf, nil
 }
 
-// HandleDescribeTopicPartitionsRequest handles a DescribeTopicPartitions v0 request.
+// HandleDescribeTopicPartitionsRequest handles a DescribeTopicPartitions request.
 // For this stage, it always returns UNKNOWN_TOPIC_OR_PARTITION.
-func HandleDescribeTopicPartitionsRequest(req *BaseRequest) *DescribeTopicPartitionsResponseV0 {
+func HandleDescribeTopicPartitionsRequest(req *BaseRequest) *DescribeTopicPartitionsResponse {
 	log.Printf("DEBUG: Handling DescribeTopicPartitions request: %s\n", req)
 	parsedReq, err := ParseDescribeTopicPartitionsRequest(req.RemainingBytes)
 	if err != nil {
@@ -329,10 +327,10 @@ func HandleDescribeTopicPartitionsRequest(req *BaseRequest) *DescribeTopicPartit
 		// For simplicity in this stage, we might assume parsing succeeds enough
 		// to get the correlation ID, or return a default error structure.
 		// Let's try to return the expected structure even on parse error, if possible.
-		return &DescribeTopicPartitionsResponseV0{
+		return &DescribeTopicPartitionsResponse{
 			CorrelationID:  req.CorrelationID,
 			ThrottleTimeMs: 0,
-			Topics:         []*DescribeTopicPartitionsResponseTopicV0{}, // Empty topics on parse error
+			Topics:         []*DescribeTopicPartitionsResponseTopic{}, // Empty topics on parse error
 		}
 	}
 
@@ -343,20 +341,20 @@ func HandleDescribeTopicPartitionsRequest(req *BaseRequest) *DescribeTopicPartit
 	}
 
 	// Construct the response topic
-	responseTopic := &DescribeTopicPartitionsResponseTopicV0{
+	responseTopic := &DescribeTopicPartitionsResponseTopic{
 		ErrorCode:    protocol.ErrorUnknownTopicOrPartition,
 		TopicName:    topicName,
 		TopicID:      uuid.Nil, // Zero UUID
 		IsInternal:   false,
-		Partitions:   []*DescribeTopicPartitionsResponsePartitionV0{}, // Empty partitions array
+		Partitions:   []*DescribeTopicPartitionsResponsePartition{}, // Empty partitions array
 		TopicAuthOps: 0,
 	}
 
 	// Construct the full response
-	resp := &DescribeTopicPartitionsResponseV0{
+	resp := &DescribeTopicPartitionsResponse{
 		CorrelationID:  req.CorrelationID,
 		ThrottleTimeMs: 0,
-		Topics:         []*DescribeTopicPartitionsResponseTopicV0{responseTopic},
+		Topics:         []*DescribeTopicPartitionsResponseTopic{responseTopic},
 	}
 
 	return resp
