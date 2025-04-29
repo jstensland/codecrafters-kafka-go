@@ -239,8 +239,11 @@ func (r *DescribeTopicPartitionsResponseV0) Serialize() ([]byte, error) {
 	// #nosec G115 -- Conversion is safe in this context
 	arrayLengthVarintSize := protocol.WriteUvarint(varintBuf, uint64(len(r.Topics)+1))
 
+	log.Printf("DEBUG: number of topics: %d\n", len(r.Topics)+1)
+
 	// ThrottleTime(4) + TopicsArrayLen(Uvarint)
-	totalSize := protocol.SizeFieldLength + protocol.CorrelationIDLength + 4 + arrayLengthVarintSize + topicsDataSize
+	totalSize := protocol.SizeFieldLength + protocol.CorrelationIDLength + TaggedFieldsLength +
+		4 + arrayLengthVarintSize + topicsDataSize
 	buf := make([]byte, totalSize)
 	offset := 0
 
@@ -249,19 +252,31 @@ func (r *DescribeTopicPartitionsResponseV0) Serialize() ([]byte, error) {
 	binary.BigEndian.PutUint32(buf[offset:offset+protocol.SizeFieldLength], uint32(totalSize-protocol.SizeFieldLength))
 	offset += protocol.SizeFieldLength
 
+	log.Printf("DEBUG: write payload size bytes: %x", uint32(totalSize-protocol.SizeFieldLength))
+
 	// Write CorrelationID (uint32)
 	binary.BigEndian.PutUint32(buf[offset:offset+protocol.CorrelationIDLength], r.CorrelationID)
 	offset += protocol.CorrelationIDLength
+
+	log.Printf("DEBUG: correlation id bytes: %x", r.CorrelationID)
+
+	// Tagged buffer expeted after headers
+	buf[offset] = 0              // The UVarint encoding for 0 is a single byte 0
+	offset += TaggedFieldsLength // Increment offset
 
 	// Write ThrottleTimeMs (int32)
 	// #nosec G115 -- Conversion is safe in this context
 	binary.BigEndian.PutUint32(buf[offset:offset+4], uint32(r.ThrottleTimeMs))
 	offset += 4
 
+	log.Printf("DEBUG: ThrottleTimeMs bytes: %x", r.ThrottleTimeMs)
+
 	// Write Topics Array Length (Uvarint N+1)
 	// #nosec G115 -- Conversion is safe in this context
 	nBytes := protocol.WriteUvarint(buf[offset:], uint64(len(r.Topics)+1))
 	offset += nBytes
+
+	log.Printf("DEBUG: array length bytes: %x", buf[offset-nBytes:offset])
 
 	// Write Topic Payloads
 	for _, topicBytes := range topicPayloads {
