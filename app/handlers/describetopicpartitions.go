@@ -263,9 +263,9 @@ func (r *DescribeTopicPartitionsResponse) Serialize() ([]byte, error) {
 
 	log.Printf("DEBUG: number of topics: %d\n", len(r.Topics)+1)
 
-	// ThrottleTime(4) + TopicsArrayLen(Uvarint)
+	// ThrottleTime(4) + TopicsArrayLen(Uvarint) + Cursor(1) + TaggedFields(1)
 	totalSize := protocol.SizeFieldLength + protocol.CorrelationIDLength + TaggedFieldsLength +
-		4 + arrayLengthVarintSize + topicsDataSize
+		4 + arrayLengthVarintSize + topicsDataSize + 1 + 1 // +1 for Cursor, +1 for Tagged Fields
 	buf := make([]byte, totalSize)
 	offset := 0
 
@@ -305,6 +305,14 @@ func (r *DescribeTopicPartitionsResponse) Serialize() ([]byte, error) {
 		copy(buf[offset:], topicBytes)
 		offset += len(topicBytes)
 	}
+
+	// Write zero byte for Cursor (placeholder)
+	buf[offset] = 0
+	offset++
+
+	// Write zero byte for Tagged Fields (placeholder)
+	buf[offset] = 0
+	offset++
 
 	if offset != totalSize {
 		return nil, fmt.Errorf("describe topic partitions response serialize size mismatch: expected %d, got %d",

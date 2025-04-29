@@ -106,7 +106,7 @@ func TestParseDescribeTopicPartitionsRequest(t *testing.T) {
 	}
 }
 
-func TestDescribeTopicPartitionsResponseTopicV0_Serialize(t *testing.T) {
+func TestDescribeTopicPartitionsResponseTopic_Serialize(t *testing.T) {
 	topic := &handlers.DescribeTopicPartitionsResponseTopic{
 		ErrorCode:    protocol.ErrorUnknownTopicOrPartition,
 		TopicName:    "my-topic",
@@ -129,7 +129,7 @@ func TestDescribeTopicPartitionsResponseTopicV0_Serialize(t *testing.T) {
 	assert.Equal(t, expectedBytes, actualBytes)
 }
 
-func TestDescribeTopicPartitionsResponseV0_Serialize(t *testing.T) {
+func TestDescribeTopicPartitionsResponse_Serialize(t *testing.T) {
 	correlationID := uint32(12345)
 	topicName := "unknown-topic"
 
