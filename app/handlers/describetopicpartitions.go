@@ -187,11 +187,17 @@ func ParseDescribeTopicPartitionsRequest(payload []byte) (*DescribeTopicPartitio
 
 // Serialize serializes the DescribeTopicPartitionsResponseTopicV0 struct into bytes.
 func (t *DescribeTopicPartitionsResponseTopicV0) Serialize() []byte {
-	// Calculate size: ErrorCode(2) + TopicNameLen(2) + TopicName + TopicID(16) + PartitionsArrayLen(4)
+	// Calculate size: ErrorCode(2) + TopicNameLen(Uvarint) + TopicName + TopicID(16) + PartitionsArrayLen(4)
 	topicNameBytes := []byte(t.TopicName)
 	topicNameLen := len(topicNameBytes)
+
+	// Calculate size needed for the Uvarint length prefix (N+1) for the compact string
+	varintBuf := make([]byte, binary.MaxVarintLen64) // Max size for a uvarint
 	// #nosec G115 -- Conversion is safe in this context
-	totalSize := protocol.ErrorCodeLength + describeTopicPartitionsV0TopicNameLengthBytes + topicNameLen + describeTopicPartitionsV0TopicIDBytes + describeTopicPartitionsV0PartitionsArrayBytes
+	topicNameVarintSize := protocol.WriteUvarint(varintBuf, uint64(topicNameLen+1))
+
+	// #nosec G115 -- Conversion is safe in this context
+	totalSize := protocol.ErrorCodeLength + topicNameVarintSize + topicNameLen + describeTopicPartitionsV0TopicIDBytes + describeTopicPartitionsV0PartitionsArrayBytes
 
 	buf := make([]byte, totalSize)
 	offset := 0
@@ -201,10 +207,10 @@ func (t *DescribeTopicPartitionsResponseTopicV0) Serialize() []byte {
 	binary.BigEndian.PutUint16(buf[offset:offset+protocol.ErrorCodeLength], uint16(t.ErrorCode))
 	offset += protocol.ErrorCodeLength
 
-	// Write TopicName Length (int16)
+	// Write TopicName Length (Uvarint N+1)
 	// #nosec G115 -- Conversion is safe in this context
-	binary.BigEndian.PutUint16(buf[offset:offset+describeTopicPartitionsV0TopicNameLengthBytes], uint16(topicNameLen))
-	offset += describeTopicPartitionsV0TopicNameLengthBytes
+	nBytes := protocol.WriteUvarint(buf[offset:], uint64(topicNameLen+1))
+	offset += nBytes
 
 	// Write TopicName (string)
 	copy(buf[offset:offset+topicNameLen], topicNameBytes)
