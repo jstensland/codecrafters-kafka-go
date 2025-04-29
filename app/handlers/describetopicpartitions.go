@@ -87,8 +87,6 @@ func ParseDescribeTopicPartitionsRequest(payload []byte) (*DescribeTopicPartitio
 		offset += clientIDLen
 	}
 
-	log.Printf("DEBUG: ClientID: %s\n", req.ClientID)
-
 	// Parse Tagged Fields byte (UVarint count, expected to be 0)
 	if len(payload) < offset+1 {
 		return nil, fmt.Errorf("payload too short for tagged fields byte: %w", ErrParseDescribeTopicRequest)
@@ -117,15 +115,12 @@ func ParseDescribeTopicPartitionsRequest(payload []byte) (*DescribeTopicPartitio
 	}
 	offset += bytesRead
 
-	log.Printf("DEBUG: bytes read: %d\n", bytesRead)
-	log.Printf("DEBUG: Topic Array Length (N+1): %d\n", topicArrayLenPlusOne)
-
 	if topicArrayLenPlusOne == 0 {
 		return nil, fmt.Errorf(
 			"invalid topic array length uvarint N+1 cannot be 0: %w",
 			ErrParseDescribeTopicRequest)
 	}
-	topicArrayLen := int(topicArrayLenPlusOne - 1) // Actual length is N
+	topicArrayLen := topicArrayLenPlusOne - 1 // Actual length is N
 
 	// We only need the first topic for this stage
 	if topicArrayLen > 0 {
@@ -145,10 +140,8 @@ func ParseDescribeTopicPartitionsRequest(payload []byte) (*DescribeTopicPartitio
 				ErrParseDescribeTopicRequest)
 			// Alternatively, handle as empty string: topicName = ""
 		}
-		topicNameLen := int(topicNameLenPlusOne - 1) // Actual length is N
-
-		log.Printf("DEBUG: Topic Name Length (N+1): %d, Bytes Read: %d\n", topicNameLenPlusOne, bytesReadNameLen)
-		log.Printf("DEBUG: Actual Topic Name Length: %d\n", topicNameLen)
+		// #nosec G115 -- Conversion is safe in this context
+		topicNameLen := int(topicNameLenPlusOne - 1)
 
 		// 3. Parse Topic Name (string)
 		if len(payload) < offset+topicNameLen {
@@ -169,9 +162,6 @@ func ParseDescribeTopicPartitionsRequest(payload []byte) (*DescribeTopicPartitio
 		// partitionArrayLen := int(binary.BigEndian.Uint32(payload[offset : offset+4]))
 		// offset += 4
 		// TODO: Skip partition indices if needed later
-
-		log.Printf("DEBUG: Topic Name: %s\n", topicName)
-
 	} else {
 		// Handle case with zero topics if necessary, though the test case implies one topic.
 		req.Topics = []*DescribeTopicPartitionsRequestTopic{}
@@ -199,9 +189,8 @@ func (t *DescribeTopicPartitionsResponseTopic) Serialize() []byte {
 	// Calculate size for partitions array length (Uvarint N+1, where N=0)
 	partitionsArrayVarintSize := protocol.WriteUvarint(varintBuf, uint64(0+1)) // Always 1 byte for Uvarint(1)
 
-	// Calculate total size: ErrorCode(2) + TopicNameLen(Uvarint) + TopicName + TopicID(16) + IsInternal(1) + PartitionsArrayLen(Uvarint) + TopicAuthOps(4) + TagBuffer(1)
-	// #nosec G115 -- Conversion is safe in this context
-	totalSize := protocol.ErrorCodeLength + topicNameVarintSize + topicNameLen + describeTopicPartitionsTopicIDBytes + 1 + partitionsArrayVarintSize + 4 + TaggedFieldsLength
+	totalSize := protocol.ErrorCodeLength + topicNameVarintSize + topicNameLen + describeTopicPartitionsTopicIDBytes +
+		IsInternalLength + partitionsArrayVarintSize + 4 + TaggedFieldsLength
 
 	buf := make([]byte, totalSize)
 	offset := 0
@@ -261,8 +250,6 @@ func (r *DescribeTopicPartitionsResponse) Serialize() ([]byte, error) {
 	// #nosec G115 -- Conversion is safe in this context
 	arrayLengthVarintSize := protocol.WriteUvarint(varintBuf, uint64(len(r.Topics)+1))
 
-	log.Printf("DEBUG: number of topics: %d\n", len(r.Topics)+1)
-
 	// ThrottleTime(4) + TopicsArrayLen(Uvarint) + Cursor(1) + TaggedFields(1)
 	totalSize := protocol.SizeFieldLength + protocol.CorrelationIDLength + TaggedFieldsLength +
 		4 + arrayLengthVarintSize + topicsDataSize + 1 + 1 // +1 for Cursor, +1 for Tagged Fields
@@ -274,13 +261,9 @@ func (r *DescribeTopicPartitionsResponse) Serialize() ([]byte, error) {
 	binary.BigEndian.PutUint32(buf[offset:offset+protocol.SizeFieldLength], uint32(totalSize-protocol.SizeFieldLength))
 	offset += protocol.SizeFieldLength
 
-	log.Printf("DEBUG: write payload size bytes: %x", uint32(totalSize-protocol.SizeFieldLength))
-
 	// Write CorrelationID (uint32)
 	binary.BigEndian.PutUint32(buf[offset:offset+protocol.CorrelationIDLength], r.CorrelationID)
 	offset += protocol.CorrelationIDLength
-
-	log.Printf("DEBUG: correlation id bytes: %x", r.CorrelationID)
 
 	// Tagged buffer expeted after headers
 	buf[offset] = 0              // The UVarint encoding for 0 is a single byte 0
@@ -291,14 +274,10 @@ func (r *DescribeTopicPartitionsResponse) Serialize() ([]byte, error) {
 	binary.BigEndian.PutUint32(buf[offset:offset+4], uint32(r.ThrottleTimeMs))
 	offset += 4
 
-	log.Printf("DEBUG: ThrottleTimeMs bytes: %x", r.ThrottleTimeMs)
-
 	// Write Topics Array Length (Uvarint N+1)
 	// #nosec G115 -- Conversion is safe in this context
 	nBytes := protocol.WriteUvarint(buf[offset:], uint64(len(r.Topics)+1))
 	offset += nBytes
-
-	log.Printf("DEBUG: array length bytes: %x", buf[offset-nBytes:offset])
 
 	// Write Topic Payloads
 	for _, topicBytes := range topicPayloads {
@@ -325,20 +304,25 @@ func (r *DescribeTopicPartitionsResponse) Serialize() ([]byte, error) {
 // HandleDescribeTopicPartitionsRequest handles a DescribeTopicPartitions request.
 // For this stage, it always returns UNKNOWN_TOPIC_OR_PARTITION.
 func HandleDescribeTopicPartitionsRequest(req *BaseRequest) *DescribeTopicPartitionsResponse {
-	log.Printf("DEBUG: Handling DescribeTopicPartitions request: %s\n", req)
 	parsedReq, err := ParseDescribeTopicPartitionsRequest(req.RemainingBytes)
 	if err != nil {
-		// Handle parsing error - potentially return a generic error response
-		// For now, log and return a basic error response matching the structure
+		// Handle parsing error - return a generic error response
 		log.Printf("Error parsing DescribeTopicPartitions request: %v\n", err)
-		// Returning a response with error code might be complex if parsing failed early.
-		// For simplicity in this stage, we might assume parsing succeeds enough
-		// to get the correlation ID, or return a default error structure.
-		// Let's try to return the expected structure even on parse error, if possible.
+
+		// Return a response with an error topic even on parse error
+		errorTopic := &DescribeTopicPartitionsResponseTopic{
+			ErrorCode:    protocol.ErrorUnknownTopicOrPartition,
+			TopicName:    "", // Empty topic name since we couldn't parse it
+			TopicID:      uuid.Nil,
+			IsInternal:   false,
+			Partitions:   []*DescribeTopicPartitionsResponsePartition{},
+			TopicAuthOps: 0,
+		}
+
 		return &DescribeTopicPartitionsResponse{
 			CorrelationID:  req.CorrelationID,
 			ThrottleTimeMs: 0,
-			Topics:         []*DescribeTopicPartitionsResponseTopic{}, // Empty topics on parse error
+			Topics:         []*DescribeTopicPartitionsResponseTopic{errorTopic},
 		}
 	}
 

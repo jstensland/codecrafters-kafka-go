@@ -22,7 +22,7 @@ type Serializable interface {
 	Serialize() []byte
 }
 
-// writeUvarint encodes a uint64 as an unsigned varint into the provided byte slice
+// WriteUvarint encodes a uint64 as an unsigned varint into the provided byte slice
 // and returns the number of bytes written.
 // It panics if the buffer is too small.
 func WriteUvarint(buf []byte, x uint64) int {

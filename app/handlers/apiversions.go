@@ -16,6 +16,7 @@ const (
 	VersionFieldLength = 2
 	ThrottleTimeLength = 4
 	TaggedFieldsLength = 1 // UVarint 0 for empty tagged fields (at the end of the struct/array)
+	IsInternalLength   = 1
 
 	// APIKeyVersion is 7 bytes: APIKey(2) + MinVersion(2) + MaxVersion(2) + TaggedFields(1)
 	APIKeyEntryLength = APIKeyFieldLength + VersionFieldLength + VersionFieldLength + TaggedFieldsLength
