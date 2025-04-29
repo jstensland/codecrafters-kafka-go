@@ -66,6 +66,8 @@ func (s *Server) Serve() error {
 }
 
 // HandleConnection processes multiple requests from a single client connection
+//
+//nolint:cyclop // TODO: separate out the routing to reduce the cyclomatic complexity
 func (s *Server) HandleConnection(conn net.Conn, readTimeout time.Duration) {
 	defer s.closeConn(conn) // Ensure connection is closed when handler exits
 

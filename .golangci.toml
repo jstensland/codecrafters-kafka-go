@@ -42,14 +42,11 @@ exclude-functions = ["fmt.Fprint", "fmt.Fprintf", "fmt.Fprintln"]
 [linters-settings.goconst]
 ignore-tests = true
 
+[linters-settings.godox]
+keywords = ["BUG", "FIXME"] # removing TODO because I use it between commits
+
 [linters-settings.gofumpt]
 extra-rules = true # aggressive fumpt
-
-[linters-settings.goimports]
-local-prefixes = "github.com/janrain"
-
-[linters-settings.gosec]
-excludes = ["G307"]
 
 [linters-settings.funlen]
 lines = -1 # only count statements, blank lines and comments shouldn't penalize a func

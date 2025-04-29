@@ -61,6 +61,8 @@ type DescribeTopicPartitionsResponse struct {
 
 // ParseDescribeTopicPartitionsRequest parses the raw byte payload for a DescribeTopicPartitions request.
 // For this stage, we only care about the first topic name.
+//
+//nolint:cyclop,funlen // TODO: break parsing into meaningful units by type
 func ParseDescribeTopicPartitionsRequest(payload []byte) (*DescribeTopicPartitionsRequest, error) {
 	req := &DescribeTopicPartitionsRequest{}
 	offset := 0
@@ -123,50 +125,51 @@ func ParseDescribeTopicPartitionsRequest(payload []byte) (*DescribeTopicPartitio
 	}
 	topicArrayLen := topicArrayLenPlusOne - 1 // Actual length is N
 
-	// We only need the first topic for this stage
-	if topicArrayLen > 0 {
-		// 2. Parse Topic Name Length (Uvarint)
-		topicNameLenPlusOne, bytesReadNameLen := binary.Uvarint(payload[offset:])
-		if bytesReadNameLen <= 0 {
-			return nil, fmt.Errorf("failed to read topic name length (uvarint) bytesRead=%d: %w",
-				bytesReadNameLen, ErrParseDescribeTopicRequest)
-		}
-		offset += bytesReadNameLen
-
-		if topicNameLenPlusOne == 0 {
-			// This represents a null string in Kafka compact format.
-			// Handle appropriately if null topic names are possible/expected.
-			// For now, treat as an error or empty string? Let's assume error for now.
-			return nil, fmt.Errorf("invalid topic name length uvarint N+1 cannot be 0 for non-null string: %w",
-				ErrParseDescribeTopicRequest)
-			// Alternatively, handle as empty string: topicName = ""
-		}
-		// #nosec G115 -- Conversion is safe in this context
-		topicNameLen := int(topicNameLenPlusOne - 1)
-
-		// 3. Parse Topic Name (string)
-		if len(payload) < offset+topicNameLen {
-			return nil, fmt.Errorf("payload too short for topic name (expected %d bytes, have %d): %w",
-				topicNameLen, len(payload)-offset, ErrParseDescribeTopicRequest)
-		}
-		topicName := string(payload[offset : offset+topicNameLen])
-		offset += topicNameLen
-
-		req.Topics = append(req.Topics, &DescribeTopicPartitionsRequestTopic{
-			TopicName: topicName,
-		})
-
-		// 4. Parse Partition Index Array Length (int32) - Skip for now
-		if len(payload) < offset+4 {
-			return nil, fmt.Errorf("payload too short for partition index array length: %w", ErrParseDescribeTopicRequest)
-		}
-		// partitionArrayLen := int(binary.BigEndian.Uint32(payload[offset : offset+4]))
-		// offset += 4
-		// TODO: Skip partition indices if needed later
-	} else {
-		// Handle case with zero topics if necessary, though the test case implies one topic.
+	if topicArrayLen <= 0 {
+		// Handle case with zero topics if necessary
 		req.Topics = []*DescribeTopicPartitionsRequestTopic{}
+		return req, nil
 	}
+	// We only need the first topic for this stage
+
+	// 2. Parse Topic Name Length (Uvarint)
+	topicNameLenPlusOne, bytesReadNameLen := binary.Uvarint(payload[offset:])
+	if bytesReadNameLen <= 0 {
+		return nil, fmt.Errorf("failed to read topic name length (uvarint) bytesRead=%d: %w",
+			bytesReadNameLen, ErrParseDescribeTopicRequest)
+	}
+	offset += bytesReadNameLen
+
+	if topicNameLenPlusOne == 0 {
+		// This represents a null string in Kafka compact format.
+		// Handle appropriately if null topic names are possible/expected.
+		// For now, treat as an error or empty string? Let's assume error for now.
+		return nil, fmt.Errorf("invalid topic name length uvarint N+1 cannot be 0 for non-null string: %w",
+			ErrParseDescribeTopicRequest)
+		// Alternatively, handle as empty string: topicName = ""
+	}
+	// #nosec G115 -- Conversion is safe in this context
+	topicNameLen := int(topicNameLenPlusOne - 1)
+
+	// 3. Parse Topic Name (string)
+	if len(payload) < offset+topicNameLen {
+		return nil, fmt.Errorf("payload too short for topic name (expected %d bytes, have %d): %w",
+			topicNameLen, len(payload)-offset, ErrParseDescribeTopicRequest)
+	}
+	topicName := string(payload[offset : offset+topicNameLen])
+	offset += topicNameLen
+
+	req.Topics = append(req.Topics, &DescribeTopicPartitionsRequestTopic{
+		TopicName: topicName,
+	})
+
+	// 4. Parse Partition Index Array Length (int32) - Skip for now
+	if len(payload) < offset+4 {
+		return nil, fmt.Errorf("payload too short for partition index array length: %w", ErrParseDescribeTopicRequest)
+	}
+	// partitionArrayLen := int(binary.BigEndian.Uint32(payload[offset : offset+4]))
+	// offset += 4
+	// TODO: Skip partition indices if needed later
 
 	// Ignore remaining fields
 	// - Response Partition Limit
