@@ -196,8 +196,12 @@ func (t *DescribeTopicPartitionsResponseTopicV0) Serialize() []byte {
 	// #nosec G115 -- Conversion is safe in this context
 	topicNameVarintSize := protocol.WriteUvarint(varintBuf, uint64(topicNameLen+1))
 
+	// Calculate size for partitions array length (Uvarint N+1, where N=0)
+	partitionsArrayVarintSize := protocol.WriteUvarint(varintBuf, uint64(0+1)) // Always 1 byte for Uvarint(1)
+
+	// Calculate total size: ErrorCode(2) + TopicNameLen(Uvarint) + TopicName + TopicID(16) + IsInternal(1) + PartitionsArrayLen(Uvarint) + TopicAuthOps(4) + TagBuffer(1)
 	// #nosec G115 -- Conversion is safe in this context
-	totalSize := protocol.ErrorCodeLength + topicNameVarintSize + topicNameLen + describeTopicPartitionsV0TopicIDBytes + describeTopicPartitionsV0PartitionsArrayBytes
+	totalSize := protocol.ErrorCodeLength + topicNameVarintSize + topicNameLen + describeTopicPartitionsV0TopicIDBytes + 1 + partitionsArrayVarintSize + 4 + TaggedFieldsLength
 
 	buf := make([]byte, totalSize)
 	offset := 0
@@ -221,9 +225,21 @@ func (t *DescribeTopicPartitionsResponseTopicV0) Serialize() []byte {
 	copy(buf[offset:offset+describeTopicPartitionsV0TopicIDBytes], topicIDBytes)
 	offset += describeTopicPartitionsV0TopicIDBytes
 
-	// Write Partitions Array Length (int32) - Always 0 for UNKNOWN_TOPIC_OR_PARTITION
-	binary.BigEndian.PutUint32(buf[offset:offset+describeTopicPartitionsV0PartitionsArrayBytes], 0)
-	// offset += describeTopicPartitionsV0PartitionsArrayBytes // No need to increment offset, it's the last field
+	// Write IsInternal (byte) - Always false (0) for v0
+	buf[offset] = 0
+	offset++
+
+	// Write Partitions Array Length (Uvarint N+1) - Always 1 (0x01) for empty array
+	nBytesPartitions := protocol.WriteUvarint(buf[offset:], uint64(len(t.Partitions)+1))
+	offset += nBytesPartitions
+
+	// Write TopicAuthOps (int32) - Always 0 for v0
+	binary.BigEndian.PutUint32(buf[offset:offset+4], uint32(t.TopicAuthOps))
+	offset += 4
+
+	// Write Tag Buffer (byte) - Always 0 for empty tags
+	buf[offset] = 0
+	// offset++ // No need to increment offset, we are at the end
 
 	return buf
 }
@@ -289,6 +305,8 @@ func (r *DescribeTopicPartitionsResponseV0) Serialize() ([]byte, error) {
 		copy(buf[offset:], topicBytes)
 		offset += len(topicBytes)
 	}
+
+	// Note: DescribeTopicPartitions Response v0 does not have a NextCursor or a tag buffer at the end.
 
 	if offset != totalSize {
 		return nil, fmt.Errorf("describe topic partitions response serialize size mismatch: expected %d, got %d",
