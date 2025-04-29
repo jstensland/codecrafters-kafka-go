@@ -306,8 +306,8 @@ func (r *DescribeTopicPartitionsResponse) Serialize() ([]byte, error) {
 		offset += len(topicBytes)
 	}
 
-	// Write zero byte for Cursor (placeholder)
-	buf[offset] = 0
+	// Write 0xff byte for Cursor (placeholder, indicates no cursor)
+	buf[offset] = 0xff
 	offset++
 
 	// Write zero byte for Tagged Fields (placeholder)
