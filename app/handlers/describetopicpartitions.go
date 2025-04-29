@@ -4,6 +4,7 @@ package handlers
 import (
 	"encoding/binary"
 	"fmt"
+	"log"
 
 	"github.com/codecrafters-io/kafka-starter-go/app/protocol"
 	"github.com/google/uuid"
@@ -25,7 +26,8 @@ type DescribeTopicPartitionsRequestTopicV0 struct {
 
 // DescribeTopicPartitionsRequestV0 represents the DescribeTopicPartitions request v0.
 type DescribeTopicPartitionsRequestV0 struct {
-	Topics []*DescribeTopicPartitionsRequestTopicV0
+	ClientID string // Added ClientID field
+	Topics   []*DescribeTopicPartitionsRequestTopicV0
 	// IncludeClusterAuthorizedOperations and IncludeTopicAuthorizedOperations are ignored for v0
 }
 
@@ -58,33 +60,88 @@ func ParseDescribeTopicPartitionsRequest(payload []byte) (*DescribeTopicPartitio
 	req := &DescribeTopicPartitionsRequestV0{}
 	offset := 0
 
-	// 1. Parse Topic Array Length (int32)
-	if len(payload) < offset+4 {
-		return nil, fmt.Errorf("payload too short for topic array length")
+	// Parse Client ID Length (int16)
+	if len(payload) < offset+2 {
+		return nil, fmt.Errorf("payload too short for client id length")
 	}
-	topicArrayLen := int(binary.BigEndian.Uint32(payload[offset : offset+4]))
-	offset += 4
+	clientIDLen := int(binary.BigEndian.Uint16(payload[offset : offset+2]))
+	offset += 2
 
-	if topicArrayLen < 0 {
-		return nil, fmt.Errorf("invalid negative topic array length: %d", topicArrayLen)
+	if clientIDLen < 0 {
+		// Kafka protocol allows -1 for null strings, handle if necessary, but typically client ID is not null.
+		// For now, treat negative length as an error.
+		return nil, fmt.Errorf("invalid negative client id length: %d", clientIDLen)
 	}
+	if clientIDLen == 0 {
+		req.ClientID = "" // Empty client ID
+	} else {
+		// Parse Client ID (string)
+		if len(payload) < offset+clientIDLen {
+			return nil, fmt.Errorf("payload too short for client id")
+		}
+		req.ClientID = string(payload[offset : offset+clientIDLen])
+		offset += clientIDLen
+	}
+
+	log.Printf("DEBUG: ClientID: %s\n", req.ClientID)
+
+	// Parse Tagged Fields byte (UVarint count, expected to be 0 for v0)
+	if len(payload) < offset+1 {
+		return nil, fmt.Errorf("payload too short for tagged fields byte")
+	}
+	taggedFieldsByte := payload[offset]
+	offset++
+	if taggedFieldsByte != 0 {
+		// v0 of DescribeTopicPartitions does not support tagged fields.
+		// Log a warning but continue parsing as per the structure.
+		log.Printf("WARN: Received non-zero tagged fields byte (0x%X) for DescribeTopicPartitionsRequestV0, expected 0", taggedFieldsByte)
+		// In a stricter implementation, this might be an error.
+		// If tagged fields were actually present, the offset calculation would need to skip them.
+	}
+
+	// 1. Parse Topic Array Length (Uvarint)
+	// Kafka compact arrays use Uvarint for length, encoded as N+1.
+	topicArrayLenPlusOne, bytesRead := binary.Uvarint(payload[offset:])
+	if bytesRead <= 0 {
+		// bytesRead == 0 means buffer too small
+		// bytesRead < 0 means value overflowed uint64
+		return nil, fmt.Errorf("failed to read topic array length (uvarint): bytesRead=%d", bytesRead)
+	}
+	offset += bytesRead
+
+	log.Printf("DEBUG: bytes read: %d\n", bytesRead)
+	log.Printf("DEBUG: Topic Array Length (N+1): %d\n", topicArrayLenPlusOne)
+
+	if topicArrayLenPlusOne == 0 {
+		return nil, fmt.Errorf("invalid topic array length uvarint: N+1 cannot be 0")
+	}
+	topicArrayLen := int(topicArrayLenPlusOne - 1) // Actual length is N
 
 	// We only need the first topic for this stage
 	if topicArrayLen > 0 {
-		// 2. Parse Topic Name Length (int16)
-		if len(payload) < offset+2 {
-			return nil, fmt.Errorf("payload too short for topic name length")
+		// 2. Parse Topic Name Length (Uvarint)
+		topicNameLenPlusOne, bytesReadNameLen := binary.Uvarint(payload[offset:])
+		if bytesReadNameLen <= 0 {
+			return nil, fmt.Errorf("failed to read topic name length (uvarint): bytesRead=%d", bytesReadNameLen)
 		}
-		topicNameLen := int(binary.BigEndian.Uint16(payload[offset : offset+2]))
-		offset += 2
+		offset += bytesReadNameLen
 
-		if topicNameLen < 0 {
-			return nil, fmt.Errorf("invalid negative topic name length: %d", topicNameLen)
+		if topicNameLenPlusOne == 0 {
+			// This represents a null string in Kafka compact format.
+			// Handle appropriately if null topic names are possible/expected.
+			// For now, treat as an error or empty string? Let's assume error for now.
+			return nil, fmt.Errorf("invalid topic name length uvarint: N+1 cannot be 0 for non-null string")
+			// Alternatively, handle as empty string: topicName = ""
 		}
+		topicNameLen := int(topicNameLenPlusOne - 1) // Actual length is N
+
+		log.Printf("DEBUG: Topic Name Length (N+1): %d, Bytes Read: %d\n", topicNameLenPlusOne, bytesReadNameLen)
+		log.Printf("DEBUG: Actual Topic Name Length: %d\n", topicNameLen)
+		log.Printf("DEBUG: offset after name length: %d and payload length: %d\n", offset, len(payload))
 
 		// 3. Parse Topic Name (string)
 		if len(payload) < offset+topicNameLen {
-			return nil, fmt.Errorf("payload too short for topic name")
+			return nil, fmt.Errorf("payload too short for topic name (expected %d bytes, have %d)", topicNameLen, len(payload)-offset)
 		}
 		topicName := string(payload[offset : offset+topicNameLen])
 		offset += topicNameLen
@@ -200,6 +257,7 @@ func (r *DescribeTopicPartitionsResponseV0) Serialize() ([]byte, error) {
 // HandleDescribeTopicPartitionsRequest handles a DescribeTopicPartitions v0 request.
 // For this stage, it always returns UNKNOWN_TOPIC_OR_PARTITION.
 func HandleDescribeTopicPartitionsRequest(req *BaseRequest) *DescribeTopicPartitionsResponseV0 {
+	log.Printf("DEBUG: Handling DescribeTopicPartitions request: %s\n", req)
 	parsedReq, err := ParseDescribeTopicPartitionsRequest(req.RemainingBytes)
 	if err != nil {
 		// Handle parsing error - potentially return a generic error response

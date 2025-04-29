@@ -64,3 +64,30 @@ func ParseRequest(reader io.Reader) (*BaseRequest, error) {
 
 	return req, nil
 }
+
+// String provides a human-readable representation of the BaseRequest, including hex values.
+func (r *BaseRequest) String() string {
+	// Reconstruct the header bytes for hex representation
+	headerBytes := make([]byte, protocol.SizeFieldLength+APIKeyFieldLength+VersionFieldLength+protocol.CorrelationIDLength)
+	binary.BigEndian.PutUint32(headerBytes[0:4], r.Size)
+	binary.BigEndian.PutUint16(headerBytes[4:6], r.APIKey)
+	binary.BigEndian.PutUint16(headerBytes[6:8], r.APIVersion)
+	binary.BigEndian.PutUint32(headerBytes[8:12], r.CorrelationID)
+
+	return fmt.Sprintf(
+		"BaseRequest{\n"+
+			"  Size:          %d (0x%X)\n"+
+			"  APIKey:        %d (0x%X)\n"+
+			"  APIVersion:    %d (0x%X)\n"+
+			"  CorrelationID: %d (0x%X)\n"+
+			"  Header Hex:    %X\n"+
+			"  Payload Hex:   %X\n"+
+			"}",
+		r.Size, r.Size,
+		r.APIKey, r.APIKey,
+		r.APIVersion, r.APIVersion,
+		r.CorrelationID, r.CorrelationID,
+		headerBytes,
+		r.RemainingBytes,
+	)
+}
